@@ -1,0 +1,17 @@
+{
+  "name": "rusocks-docs",
+  "version": "1.0.0",
+  "description": "Rusocks Documentation",
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.0.0"
+  },
+  "dependencies": {
+    "vitepress-plugin-pagefind": "^0.4.14"
+  }
+}
