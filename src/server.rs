@@ -29,40 +29,40 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct ServerOption {
     /// WebSocket server listen address
     pub ws_host: String,
-    
+
     /// WebSocket server listen port
     pub ws_port: u16,
-    
+
     /// SOCKS server listen address
     pub socks_host: String,
-    
+
     /// Port pool for SOCKS servers
     pub port_pool: PortPool,
-    
+
     /// Whether to wait for client before starting SOCKS server
     pub socks_wait_client: bool,
-    
+
     /// Buffer size for data transfer
     pub buffer_size: usize,
-    
+
     /// API key for HTTP API
     pub api_key: Option<String>,
-    
+
     /// Channel timeout
     pub channel_timeout: Duration,
-    
+
     /// Connect timeout
     pub connect_timeout: Duration,
-    
+
     /// Whether to use fast open
     pub fast_open: bool,
-    
+
     /// Upstream SOCKS5 proxy
     pub upstream_proxy: Option<String>,
-    
+
     /// Upstream SOCKS5 proxy username
     pub upstream_username: Option<String>,
-    
+
     /// Upstream SOCKS5 proxy password
     pub upstream_password: Option<String>,
 }
@@ -93,67 +93,67 @@ impl ServerOption {
         self.ws_host = host;
         self
     }
-    
+
     /// Set the WebSocket port
     pub fn with_ws_port(mut self, port: u16) -> Self {
         self.ws_port = port;
         self
     }
-    
+
     /// Set the SOCKS host
     pub fn with_socks_host(mut self, host: String) -> Self {
         self.socks_host = host;
         self
     }
-    
+
     /// Set the port pool
     pub fn with_port_pool(mut self, pool: PortPool) -> Self {
         self.port_pool = pool;
         self
     }
-    
+
     /// Set whether to wait for client before starting SOCKS server
     pub fn with_socks_wait_client(mut self, wait: bool) -> Self {
         self.socks_wait_client = wait;
         self
     }
-    
+
     /// Set the buffer size
     pub fn with_buffer_size(mut self, size: usize) -> Self {
         self.buffer_size = size;
         self
     }
-    
+
     /// Set the API key
     pub fn with_api(mut self, key: String) -> Self {
         self.api_key = Some(key);
         self
     }
-    
+
     /// Set the channel timeout
     pub fn with_channel_timeout(mut self, timeout: Duration) -> Self {
         self.channel_timeout = timeout;
         self
     }
-    
+
     /// Set the connect timeout
     pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
         self
     }
-    
+
     /// Set whether to use fast open
     pub fn with_fast_open(mut self, fast_open: bool) -> Self {
         self.fast_open = fast_open;
         self
     }
-    
+
     /// Set the upstream SOCKS5 proxy
     pub fn with_upstream_proxy(mut self, proxy: String) -> Self {
         self.upstream_proxy = Some(proxy);
         self
     }
-    
+
     /// Set the upstream SOCKS5 proxy authentication
     pub fn with_upstream_auth(mut self, username: String, password: String) -> Self {
         self.upstream_username = Some(username);
@@ -166,16 +166,16 @@ impl ServerOption {
 pub struct ReverseTokenOptions {
     /// Token to use (auto-generated if None)
     pub token: Option<String>,
-    
+
     /// Port to use (allocated from pool if None)
     pub port: Option<u16>,
-    
+
     /// SOCKS5 username for authentication
     pub username: Option<String>,
-    
+
     /// SOCKS5 password for authentication
     pub password: Option<String>,
-    
+
     /// Whether to allow managing connectors
     pub allow_manage_connector: bool,
 }
@@ -196,7 +196,7 @@ impl Default for ReverseTokenOptions {
 pub struct ReverseTokenResult {
     /// Token that was created or used
     pub token: String,
-    
+
     /// Port assigned to the token
     pub port: Option<u16>,
 }
@@ -205,7 +205,7 @@ pub struct ReverseTokenResult {
 struct ClientInfo {
     /// Client ID
     id: Uuid,
-    
+
     /// Client WebSocket sender
     sender: mpsc::Sender<WsMessage>,
 }
@@ -214,10 +214,10 @@ struct ClientInfo {
 struct WsConn {
     /// Client ID
     id: Uuid,
-    
+
     /// Client IP address
     client_ip: String,
-    
+
     /// WebSocket sender
     sender: mpsc::Sender<WsMessage>,
 }
@@ -226,7 +226,7 @@ struct WsConn {
 struct WaitingSocket {
     /// TCP listener
     listener: TcpListener,
-    
+
     /// Cancel timer
     cancel_timer: Option<tokio::time::Instant>,
 }
@@ -235,10 +235,10 @@ struct WaitingSocket {
 struct ConnectorCache {
     /// Maps channel_id to reverse client WebSocket connection
     channel_id_to_client: HashMap<Uuid, mpsc::Sender<WsMessage>>,
-    
+
     /// Maps channel_id to connector WebSocket connection
     channel_id_to_connector: HashMap<Uuid, mpsc::Sender<WsMessage>>,
-    
+
     /// Maps token to list of channel_ids
     token_cache: HashMap<String, Vec<Uuid>>,
 }
@@ -258,64 +258,64 @@ impl ConnectorCache {
 pub struct LinkSocksServer {
     /// Server options
     options: ServerOption,
-    
+
     /// Ready notification
     ready: Arc<Notify>,
-    
+
     /// WebSocket server address
     ws_addr: SocketAddr,
-    
+
     /// SOCKS server address
     socks_host: String,
-    
+
     /// Port pool
     port_pool: PortPool,
-    
+
     /// Whether to wait for client before starting SOCKS server
     socks_wait_client: bool,
-    
+
     /// Client connections
     clients: Arc<RwLock<HashMap<Uuid, WsConn>>>,
-    
+
     /// Forward tokens
     forward_tokens: Arc<RwLock<HashSet<String>>>,
-    
+
     /// Reverse tokens to ports
     tokens: Arc<RwLock<HashMap<String, u16>>>,
-    
+
     /// Token clients
     token_clients: Arc<RwLock<HashMap<String, Vec<ClientInfo>>>>,
-    
+
     /// Token indexes for load balancing
     token_indexes: Arc<RwLock<HashMap<String, usize>>>,
-    
+
     /// Token options
     token_options: Arc<RwLock<HashMap<String, ReverseTokenOptions>>>,
-    
+
     /// Connector tokens
     connector_tokens: Arc<RwLock<HashMap<String, String>>>,
-    
+
     /// Internal tokens
     internal_tokens: Arc<RwLock<HashMap<String, Vec<String>>>>,
-    
+
     /// SHA256 token map
     sha256_token_map: Arc<RwLock<HashMap<String, String>>>,
-    
+
     /// Connector cache
     conn_cache: Arc<AsyncMutex<ConnectorCache>>,
-    
+
     /// Active SOCKS servers
     socks_tasks: Arc<RwLock<HashMap<u16, Arc<Notify>>>>,
-    
+
     /// Waiting sockets
     waiting_sockets: Arc<RwLock<HashMap<u16, WaitingSocket>>>,
-    
+
     /// Socket manager
     socket_manager: Arc<AsyncSocketManager>,
-    
+
     /// API key
     api_key: Option<String>,
-    
+
     /// Shutdown notification
     shutdown: Arc<Notify>,
 }
@@ -326,7 +326,7 @@ impl LinkSocksServer {
         let ws_addr = format!("{}:{}", options.ws_host, options.ws_port)
             .parse()
             .expect("Invalid WebSocket address");
-        
+
         LinkSocksServer {
             options: options.clone(),
             ready: Arc::new(Notify::new()),
@@ -366,17 +366,17 @@ impl LinkSocksServer {
         if self.forward_tokens.read().await.contains(token) {
             return true;
         }
-        
+
         // Check if token exists as a reverse token
         if self.tokens.read().await.contains_key(token) {
             return true;
         }
-        
+
         // Check if token exists as a connector token
         if self.connector_tokens.read().await.contains_key(token) {
             return true;
         }
-        
+
         false
     }
 
@@ -391,30 +391,30 @@ impl LinkSocksServer {
                 return Err("Token already exists".to_string());
             }
         }
-        
+
         // Generate random token if not provided
         let token = match opts.token {
             Some(ref t) => t.clone(),
             None => Self::generate_random_token(16),
         };
-        
+
         // Generate SHA256 version of the token
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
         let sha256_token = hex::encode(hasher.finalize());
-        self.sha256_token_map.write().await.insert(sha256_token.clone(), token.clone());
-        
+        self.sha256_token_map
+            .write()
+            .await
+            .insert(sha256_token.clone(), token.clone());
+
         // For autonomy tokens, don't allocate a port
         if opts.allow_manage_connector {
             self.tokens.write().await.insert(token.clone(), 0);
             self.token_options.write().await.insert(token.clone(), opts);
             info!("New autonomy reverse token added");
-            return Ok(ReverseTokenResult {
-                token,
-                port: None,
-            });
+            return Ok(ReverseTokenResult { token, port: None });
         }
-        
+
         // Check if token already exists
         if let Some(&port) = self.tokens.read().await.get(&token) {
             return Ok(ReverseTokenResult {
@@ -422,22 +422,28 @@ impl LinkSocksServer {
                 port: Some(port),
             });
         }
-        
+
         // Get port from pool
         let assigned_port = self.port_pool.get(opts.port);
         if assigned_port == 0 {
             return Err(format!("Cannot allocate port: {:?}", opts.port));
         }
-        
+
         // Store token information
-        self.tokens.write().await.insert(token.clone(), assigned_port);
+        self.tokens
+            .write()
+            .await
+            .insert(token.clone(), assigned_port);
         self.token_options.write().await.insert(token.clone(), opts);
-        
+
         // Start SOCKS server immediately if we're not waiting for clients
         if !self.socks_wait_client {
             let notify = Arc::new(Notify::new());
-            self.socks_tasks.write().await.insert(assigned_port, notify.clone());
-            
+            self.socks_tasks
+                .write()
+                .await
+                .insert(assigned_port, notify.clone());
+
             let server = self.clone();
             let token_clone = token.clone();
             tokio::spawn(async move {
@@ -446,10 +452,10 @@ impl LinkSocksServer {
                 }
             });
         }
-        
+
         info!("New reverse proxy token added, port: {}", assigned_port);
         debug!("SHA256 for the token: {}", sha256_token.clone());
-        
+
         Ok(ReverseTokenResult {
             token,
             port: Some(assigned_port),
@@ -457,35 +463,35 @@ impl LinkSocksServer {
     }
 
     /// Add a forward token
-    pub async fn add_forward_token(
-        &self,
-        token: Option<String>,
-    ) -> Result<String, String> {
+    pub async fn add_forward_token(&self, token: Option<String>) -> Result<String, String> {
         // Check if token already exists
         if let Some(ref t) = token {
             if self.token_exists(t).await {
                 return Err("Token already exists".to_string());
             }
         }
-        
+
         // Generate random token if not provided
         let token = match token {
             Some(t) => t,
             None => Self::generate_random_token(16),
         };
-        
+
         // Generate SHA256 version of the token
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
         let sha256_token = hex::encode(hasher.finalize());
-        self.sha256_token_map.write().await.insert(sha256_token.clone(), token.clone());
-        
+        self.sha256_token_map
+            .write()
+            .await
+            .insert(sha256_token.clone(), token.clone());
+
         // Store token
         self.forward_tokens.write().await.insert(token.clone());
-        
+
         info!("New forward proxy token added");
         debug!("SHA256 for the token: {}", sha256_token.clone());
-        
+
         Ok(token)
     }
 
@@ -501,29 +507,35 @@ impl LinkSocksServer {
                 return Err("Connector token already exists".to_string());
             }
         }
-        
+
         // Generate random token if not provided
         let connector_token = match connector_token {
             Some(t) => t,
             None => Self::generate_random_token(16),
         };
-        
+
         // Verify reverse token exists
         if !self.tokens.read().await.contains_key(reverse_token) {
             return Err("Reverse token does not exist".to_string());
         }
-        
+
         // Generate SHA256 version of the token
         let mut hasher = Sha256::new();
         hasher.update(connector_token.as_bytes());
         let sha256_token = hex::encode(hasher.finalize());
-        self.sha256_token_map.write().await.insert(sha256_token.clone(), connector_token.clone());
-        
+        self.sha256_token_map
+            .write()
+            .await
+            .insert(sha256_token.clone(), connector_token.clone());
+
         // Store connector token mapping
-        self.connector_tokens.write().await.insert(connector_token.clone(), reverse_token.to_string());
-        
+        self.connector_tokens
+            .write()
+            .await
+            .insert(connector_token.clone(), reverse_token.to_string());
+
         info!("New connector token added");
-        
+
         Ok(connector_token)
     }
 
@@ -572,12 +584,12 @@ impl LinkSocksServer {
         if let Some(clients) = self.token_clients.read().await.get(token) {
             return clients.len();
         }
-        
+
         // Check forward proxy clients
         if self.forward_tokens.read().await.contains(token) {
             return self.clients.read().await.len();
         }
-        
+
         0
     }
 }

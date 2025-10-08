@@ -28,144 +28,144 @@ struct App {
 enum Commands {
     /// Print the version number
     Version,
-    
+
     /// Start SOCKS5 over WebSocket proxy client
     Client {
         /// Authentication token
         #[clap(short = 't', long)]
         token: Option<String>,
-        
+
         /// WebSocket server address
         #[clap(short = 'u', long, default_value = "ws://localhost:8765")]
         url: String,
-        
+
         /// Use reverse socks5 proxy
         #[clap(short = 'r', long)]
         reverse: bool,
-        
+
         /// Specify connector token for reverse proxy
         #[clap(short = 'c', long)]
         connector_token: Option<String>,
-        
+
         /// SOCKS5 server listen address for forward proxy
         #[clap(short = 's', long, default_value = "127.0.0.1")]
         socks_host: String,
-        
+
         /// SOCKS5 server listen port for forward proxy
         #[clap(short = 'p', long, default_value = "9870")]
         socks_port: u16,
-        
+
         /// SOCKS5 authentication username
         #[clap(short = 'n', long)]
         socks_username: Option<String>,
-        
+
         /// SOCKS5 authentication password
         #[clap(short = 'w', long)]
         socks_password: Option<String>,
-        
+
         /// Start the SOCKS server immediately
         #[clap(short = 'i', long)]
         socks_no_wait: bool,
-        
+
         /// Stop when the server disconnects
         #[clap(short = 'R', long)]
         no_reconnect: bool,
-        
+
         /// Show debug logs (use -dd for trace logs)
         #[clap(short = 'd', long, action = clap::ArgAction::Count)]
         debug: u8,
-        
+
         /// Number of threads for data transfer
         #[clap(short = 'T', long, default_value = "1")]
         threads: u32,
-        
+
         /// Upstream SOCKS5 proxy (e.g., socks5://user:pass@127.0.0.1:9870)
         #[clap(short = 'x', long)]
         upstream_proxy: Option<String>,
-        
+
         /// Assume connection success and allow data transfer immediately
         #[clap(short = 'f', long)]
         fast_open: bool,
-        
+
         /// Ignore proxy settings from environment variables when connecting to the websocket server
         #[clap(short = 'E', long)]
         no_env_proxy: bool,
     },
-    
+
     /// Alias for client command
     Connector {
         #[clap(flatten)]
         client_args: ClientArgs,
     },
-    
+
     /// Alias for client -r command
     Provider {
         #[clap(flatten)]
         client_args: ClientArgs,
     },
-    
+
     /// Start SOCKS5 over WebSocket proxy server
     Server {
         /// WebSocket server listen address
         #[clap(short = 'H', long, default_value = "0.0.0.0")]
         ws_host: String,
-        
+
         /// WebSocket server listen port
         #[clap(short = 'P', long, default_value = "8765")]
         ws_port: u16,
-        
+
         /// Specify auth token, auto-generate if not provided
         #[clap(short = 't', long)]
         token: Option<String>,
-        
+
         /// Specify connector token for reverse proxy, auto-generate if not provided
         #[clap(short = 'c', long)]
         connector_token: Option<String>,
-        
+
         /// Allow clients to manage their connector tokens
         #[clap(short = 'a', long)]
         connector_autonomy: bool,
-        
+
         /// Set buffer size for data transfer
         #[clap(short = 'b', long, default_value = "8192")]
         buffer_size: usize,
-        
+
         /// Use reverse socks5 proxy
         #[clap(short = 'r', long)]
         reverse: bool,
-        
+
         /// SOCKS5 server listen address for reverse proxy
         #[clap(short = 's', long, default_value = "127.0.0.1")]
         socks_host: String,
-        
+
         /// SOCKS5 server listen port for reverse proxy
         #[clap(short = 'p', long, default_value = "9870")]
         socks_port: u16,
-        
+
         /// SOCKS5 username for authentication
         #[clap(short = 'n', long)]
         socks_username: Option<String>,
-        
+
         /// SOCKS5 password for authentication
         #[clap(short = 'w', long)]
         socks_password: Option<String>,
-        
+
         /// Start the SOCKS server immediately
         #[clap(short = 'i', long)]
         socks_nowait: bool,
-        
+
         /// Show debug logs (use -dd for trace logs)
         #[clap(short = 'd', long, action = clap::ArgAction::Count)]
         debug: u8,
-        
+
         /// Enable HTTP API with specified key
         #[clap(short = 'k', long)]
         api_key: Option<String>,
-        
+
         /// Upstream SOCKS5 proxy (e.g., socks5://user:pass@127.0.0.1:9870)
         #[clap(short = 'x', long)]
         upstream_proxy: Option<String>,
-        
+
         /// Assume connection success and allow data transfer immediately
         #[clap(short = 'f', long)]
         fast_open: bool,
@@ -178,59 +178,59 @@ struct ClientArgs {
     /// Authentication token
     #[clap(short = 't', long)]
     token: Option<String>,
-    
+
     /// WebSocket server address
     #[clap(short = 'u', long, default_value = "ws://localhost:8765")]
     url: String,
-    
+
     /// Use reverse socks5 proxy
     #[clap(short = 'r', long)]
     reverse: bool,
-    
+
     /// Specify connector token for reverse proxy
     #[clap(short = 'c', long)]
     connector_token: Option<String>,
-    
+
     /// SOCKS5 server listen address for forward proxy
     #[clap(short = 's', long, default_value = "127.0.0.1")]
     socks_host: String,
-    
+
     /// SOCKS5 server listen port for forward proxy
     #[clap(short = 'p', long, default_value = "9870")]
     socks_port: u16,
-    
+
     /// SOCKS5 authentication username
     #[clap(short = 'n', long)]
     socks_username: Option<String>,
-    
+
     /// SOCKS5 authentication password
     #[clap(short = 'w', long)]
     socks_password: Option<String>,
-    
+
     /// Start the SOCKS server immediately
     #[clap(short = 'i', long)]
     socks_no_wait: bool,
-    
+
     /// Stop when the server disconnects
     #[clap(short = 'R', long)]
     no_reconnect: bool,
-    
+
     /// Show debug logs (use -dd for trace logs)
     #[clap(short = 'd', long, action = clap::ArgAction::Count)]
     debug: u8,
-    
+
     /// Number of threads for data transfer
     #[clap(short = 'T', long, default_value = "1")]
     threads: u32,
-    
+
     /// Upstream SOCKS5 proxy (e.g., socks5://user:pass@127.0.0.1:9870)
     #[clap(short = 'x', long)]
     upstream_proxy: Option<String>,
-    
+
     /// Assume connection success and allow data transfer immediately
     #[clap(short = 'f', long)]
     fast_open: bool,
-    
+
     /// Ignore proxy settings from environment variables when connecting to the websocket server
     #[clap(short = 'E', long)]
     no_env_proxy: bool,
@@ -239,9 +239,7 @@ struct ClientArgs {
 impl CLI {
     /// Creates a new CLI instance
     pub fn new() -> Self {
-        CLI {
-            app: App::parse(),
-        }
+        CLI { app: App::parse() }
     }
 
     /// Executes the CLI application
@@ -386,23 +384,23 @@ impl CLI {
     ) -> Result<(Option<String>, Option<String>, Option<String>), Box<dyn Error>> {
         if let Some(url_str) = proxy_url {
             let url = Url::parse(&url_str)?;
-            
+
             if url.scheme() != "socks5" {
                 return Err(format!("Unsupported proxy scheme: {}", url.scheme()).into());
             }
-            
+
             let username = if !url.username().is_empty() {
                 Some(url.username().to_string())
             } else {
                 None
             };
-            
+
             let password = url.password().map(|s| s.to_string());
-            
+
             let host = url.host_str().ok_or("Missing host in proxy URL")?;
             let port = url.port().unwrap_or(9870);
             let address = format!("{}:{}", host, port);
-            
+
             Ok((Some(address), username, password))
         } else {
             Ok((None, None, None))
@@ -430,7 +428,7 @@ impl CLI {
     ) -> Result<(), Box<dyn Error>> {
         // Parse proxy URL
         let (proxy_addr, proxy_user, proxy_pass) = self.parse_socks_proxy(upstream_proxy)?;
-        
+
         // Create client options
         let mut client_opt = ClientOption::default()
             .with_ws_url(url.to_string())
@@ -441,7 +439,7 @@ impl CLI {
             .with_reconnect(!no_reconnect)
             .with_threads(threads)
             .with_no_env_proxy(no_env_proxy);
-        
+
         // Add new options
         if let Some(addr) = proxy_addr {
             client_opt = client_opt.with_upstream_proxy(addr);
@@ -449,30 +447,30 @@ impl CLI {
                 client_opt = client_opt.with_upstream_auth(user, proxy_pass.unwrap_or_default());
             }
         }
-        
+
         if fast_open {
             client_opt = client_opt.with_fast_open(true);
         }
-        
+
         // Add authentication options if provided
         if let Some(username) = socks_username {
             client_opt = client_opt.with_socks_username(username);
         }
-        
+
         if let Some(password) = socks_password {
             client_opt = client_opt.with_socks_password(password);
         }
-        
+
         // Create client instance
         let token = token.unwrap_or_default();
         let client = LinkSocksClient::new(token, client_opt);
-        
+
         // Wait for client to be ready
         if let Err(err) = client.wait_ready().await {
             error!("Exit due to error: {}", err);
             return Err(err.into());
         }
-        
+
         // Add connector token if provided
         if let Some(conn_token) = connector_token {
             if reverse {
@@ -482,7 +480,7 @@ impl CLI {
                 }
             }
         }
-        
+
         // Wait for Ctrl+C signal
         match signal::ctrl_c().await {
             Ok(()) => {
@@ -521,14 +519,14 @@ impl CLI {
     ) -> Result<(), Box<dyn Error>> {
         // Parse proxy URL
         let (proxy_addr, proxy_user, proxy_pass) = self.parse_socks_proxy(upstream_proxy)?;
-        
+
         // Create server options
         let mut server_opt = ServerOption::default()
             .with_ws_host(ws_host.to_string())
             .with_ws_port(ws_port)
             .with_socks_host(socks_host.to_string())
             .with_buffer_size(buffer_size);
-        
+
         // Add new options
         if let Some(addr) = proxy_addr {
             server_opt = server_opt.with_upstream_proxy(addr);
@@ -536,19 +534,19 @@ impl CLI {
                 server_opt = server_opt.with_upstream_auth(user, proxy_pass.unwrap_or_default());
             }
         }
-        
+
         if fast_open {
             server_opt = server_opt.with_fast_open(true);
         }
-        
+
         // Add API key if provided
         if let Some(ref key) = api_key {
             server_opt = server_opt.with_api(key.clone());
         }
-        
+
         // Create server instance
         let server = LinkSocksServer::new(server_opt);
-        
+
         // Skip token operations if API key is provided
         if api_key.is_none() {
             // Add token based on mode
@@ -560,35 +558,39 @@ impl CLI {
                     password: socks_password.clone(),
                     allow_manage_connector: connector_autonomy,
                 };
-                
+
                 let result = server.add_reverse_token(reverse_opts).await?;
                 let use_token = result.token;
                 let port = result.port.ok_or("Failed to allocate port")?;
-                
+
                 if port == 0 {
-                    return Err(format!("Cannot allocate SOCKS5 port: {}:{}", socks_host, socks_port).into());
+                    return Err(format!(
+                        "Cannot allocate SOCKS5 port: {}:{}",
+                        socks_host, socks_port
+                    )
+                    .into());
                 }
-                
+
                 let mut use_connector_token = String::new();
                 if !connector_autonomy {
                     use_connector_token = server
                         .add_connector_token(connector_token, &use_token)
                         .await?;
                 }
-                
+
                 info!("Configuration:");
                 info!("  Mode: reverse proxy (SOCKS5 on server -> client -> network)");
                 info!("  Token: {}", use_token);
                 info!("  SOCKS5 port: {}", port);
-                
+
                 if !connector_autonomy {
                     info!("  Connector Token: {}", use_connector_token);
                 }
-                
+
                 if socks_username.is_some() && socks_password.is_some() {
                     info!("  SOCKS5 username: {}", socks_username.unwrap());
                 }
-                
+
                 if connector_autonomy {
                     info!("  Connector autonomy: enabled");
                 }
@@ -599,10 +601,10 @@ impl CLI {
                 info!("  Token: {}", use_token);
             }
         }
-        
+
         // Wait for server to be ready
         server.wait_ready().await?;
-        
+
         // Wait for Ctrl+C signal
         match signal::ctrl_c().await {
             Ok(()) => {

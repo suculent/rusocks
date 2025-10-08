@@ -11,19 +11,19 @@ use tokio::time::sleep;
 pub struct BatchLogger {
     /// Buffer for log messages
     buffer: Arc<Mutex<VecDeque<String>>>,
-    
+
     /// Maximum buffer size
     max_size: usize,
-    
+
     /// Flush interval
     flush_interval: Duration,
-    
+
     /// Last flush time
     last_flush: Arc<Mutex<Instant>>,
-    
+
     /// Shutdown channel
     shutdown_tx: mpsc::Sender<()>,
-    
+
     /// Shutdown receiver
     shutdown_rx: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
 }
@@ -32,7 +32,7 @@ impl BatchLogger {
     /// Create a new BatchLogger
     pub fn new(max_size: usize, flush_interval: Duration) -> Self {
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
-        
+
         let logger = BatchLogger {
             buffer: Arc::new(Mutex::new(VecDeque::with_capacity(max_size))),
             max_size,
@@ -41,10 +41,10 @@ impl BatchLogger {
             shutdown_tx,
             shutdown_rx: Arc::new(Mutex::new(Some(shutdown_rx))),
         };
-        
+
         // Start background flush task
         logger.start_flush_task();
-        
+
         logger
     }
 
@@ -54,9 +54,9 @@ impl BatchLogger {
         let flush_interval = self.flush_interval;
         let last_flush = self.last_flush.clone();
         let _max_size = self.max_size;
-        
+
         let mut shutdown_rx = self.shutdown_rx.lock().unwrap().take().unwrap();
-        
+
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -80,7 +80,7 @@ impl BatchLogger {
                     }
                 }
             }
-            
+
             // Final flush
             let mut buf = buffer.lock().unwrap();
             if !buf.is_empty() {
@@ -93,13 +93,13 @@ impl BatchLogger {
     /// Log a message
     pub fn log(&self, level: Level, message: &str) {
         let mut buffer = self.buffer.lock().unwrap();
-        
+
         // Format the message
         let formatted = format!("[{}] {}", level, message);
-        
+
         // Add to buffer
         buffer.push_back(formatted);
-        
+
         // Check if buffer is full
         if buffer.len() >= self.max_size {
             // Remove oldest entries
@@ -116,7 +116,7 @@ impl BatchLogger {
             // Process the logs
             buffer.clear();
         }
-        
+
         // Update last flush time
         let mut last = self.last_flush.lock().unwrap();
         *last = Instant::now();
@@ -126,7 +126,7 @@ impl BatchLogger {
     pub async fn close(&self) {
         // Send shutdown signal
         let _ = self.shutdown_tx.send(()).await;
-        
+
         // Final flush
         self.flush();
     }

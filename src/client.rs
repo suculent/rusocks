@@ -24,55 +24,55 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct ClientOption {
     /// WebSocket server URL
     pub ws_url: String,
-    
+
     /// Whether to use reverse proxy
     pub reverse: bool,
-    
+
     /// SOCKS server listen address
     pub socks_host: String,
-    
+
     /// SOCKS server listen port
     pub socks_port: u16,
-    
+
     /// SOCKS server username
     pub socks_username: Option<String>,
-    
+
     /// SOCKS server password
     pub socks_password: Option<String>,
-    
+
     /// Whether to wait for server before starting SOCKS server
     pub socks_wait_server: bool,
-    
+
     /// Whether to reconnect on disconnect
     pub reconnect: bool,
-    
+
     /// Number of threads for data transfer
     pub threads: u32,
-    
+
     /// Buffer size for data transfer
     pub buffer_size: usize,
-    
+
     /// Channel timeout
     pub channel_timeout: Duration,
-    
+
     /// Connect timeout
     pub connect_timeout: Duration,
-    
+
     /// Whether to use fast open
     pub fast_open: bool,
-    
+
     /// Upstream SOCKS5 proxy
     pub upstream_proxy: Option<String>,
-    
+
     /// Upstream SOCKS5 proxy username
     pub upstream_username: Option<String>,
-    
+
     /// Upstream SOCKS5 proxy password
     pub upstream_password: Option<String>,
-    
+
     /// Whether to ignore environment proxy settings
     pub no_env_proxy: bool,
-    
+
     /// Custom User-Agent header for WebSocket connections
     pub user_agent: Option<String>,
 }
@@ -108,98 +108,98 @@ impl ClientOption {
         self.ws_url = url;
         self
     }
-    
+
     /// Set whether to use reverse proxy
     pub fn with_reverse(mut self, reverse: bool) -> Self {
         self.reverse = reverse;
         self
     }
-    
+
     /// Set the SOCKS host
     pub fn with_socks_host(mut self, host: String) -> Self {
         self.socks_host = host;
         self
     }
-    
+
     /// Set the SOCKS port
     pub fn with_socks_port(mut self, port: u16) -> Self {
         self.socks_port = port;
         self
     }
-    
+
     /// Set the SOCKS username
     pub fn with_socks_username(mut self, username: String) -> Self {
         self.socks_username = Some(username);
         self
     }
-    
+
     /// Set the SOCKS password
     pub fn with_socks_password(mut self, password: String) -> Self {
         self.socks_password = Some(password);
         self
     }
-    
+
     /// Set whether to wait for server before starting SOCKS server
     pub fn with_socks_wait_server(mut self, wait: bool) -> Self {
         self.socks_wait_server = wait;
         self
     }
-    
+
     /// Set whether to reconnect on disconnect
     pub fn with_reconnect(mut self, reconnect: bool) -> Self {
         self.reconnect = reconnect;
         self
     }
-    
+
     /// Set the number of threads for data transfer
     pub fn with_threads(mut self, threads: u32) -> Self {
         self.threads = threads;
         self
     }
-    
+
     /// Set the buffer size
     pub fn with_buffer_size(mut self, size: usize) -> Self {
         self.buffer_size = size;
         self
     }
-    
+
     /// Set the channel timeout
     pub fn with_channel_timeout(mut self, timeout: Duration) -> Self {
         self.channel_timeout = timeout;
         self
     }
-    
+
     /// Set the connect timeout
     pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
         self
     }
-    
+
     /// Set whether to use fast open
     pub fn with_fast_open(mut self, fast_open: bool) -> Self {
         self.fast_open = fast_open;
         self
     }
-    
+
     /// Set the upstream SOCKS5 proxy
     pub fn with_upstream_proxy(mut self, proxy: String) -> Self {
         self.upstream_proxy = Some(proxy);
         self
     }
-    
+
     /// Set the upstream SOCKS5 proxy authentication
     pub fn with_upstream_auth(mut self, username: String, password: String) -> Self {
         self.upstream_username = Some(username);
         self.upstream_password = Some(password);
         self
     }
-    
+
     /// Set whether to ignore environment proxy settings
     pub fn with_no_env_proxy(mut self, no_env_proxy: bool) -> Self {
         self.no_env_proxy = no_env_proxy;
         self
     }
-    
+
     /// Set the custom User-Agent header for WebSocket connections
     pub fn with_user_agent(mut self, user_agent: String) -> Self {
         self.user_agent = Some(user_agent);
@@ -211,10 +211,10 @@ impl ClientOption {
 enum ChannelState {
     /// Waiting for connection
     Connecting,
-    
+
     /// Connected
     Connected,
-    
+
     /// Disconnected
     Disconnected,
 }
@@ -223,7 +223,7 @@ enum ChannelState {
 struct ChannelInfo {
     /// Channel state
     state: ChannelState,
-    
+
     /// Channel sender
     sender: mpsc::Sender<Vec<u8>>,
 }
@@ -232,22 +232,22 @@ struct ChannelInfo {
 pub struct LinkSocksClient {
     /// Authentication token
     token: String,
-    
+
     /// Client options
     options: ClientOption,
-    
+
     /// WebSocket sender
     ws_sender: Arc<Mutex<Option<mpsc::Sender<WsMessage>>>>,
-    
+
     /// Channels
     channels: Arc<RwLock<HashMap<Uuid, ChannelInfo>>>,
-    
+
     /// Ready notification
     ready: Arc<Notify>,
-    
+
     /// Shutdown notification
     shutdown: Arc<Notify>,
-    
+
     /// SOCKS server listener
     socks_listener: Arc<Mutex<Option<TcpListener>>>,
 }
@@ -264,7 +264,7 @@ impl LinkSocksClient {
             shutdown: Arc::new(Notify::new()),
             socks_listener: Arc::new(Mutex::new(None)),
         };
-        
+
         // Start the client
         let client_clone = client.clone();
         tokio::spawn(async move {
@@ -272,7 +272,7 @@ impl LinkSocksClient {
                 error!("Client error: {}", e);
             }
         });
-        
+
         client
     }
 
@@ -280,21 +280,25 @@ impl LinkSocksClient {
     async fn run(&self) -> Result<(), String> {
         // Connect to WebSocket server
         let user_agent = self.options.user_agent.as_deref();
-        let (handler, sender) = crate::conn::connect_to_websocket(&self.options.ws_url, user_agent).await?;
-        
+        let (handler, sender) =
+            crate::conn::connect_to_websocket(&self.options.ws_url, user_agent).await?;
+
         // Store the sender
         let mut ws_sender = self.ws_sender.lock().await;
         *ws_sender = Some(sender);
-        
+
         // Start the handler
-        handler.start().await.map_err(|e| format!("Failed to start WebSocket handler: {}", e))?;
-        
+        handler
+            .start()
+            .await
+            .map_err(|e| format!("Failed to start WebSocket handler: {}", e))?;
+
         // Notify that the client is ready
         self.ready.notify_one();
-        
+
         // Wait for shutdown
         self.shutdown.notified().await;
-        
+
         Ok(())
     }
 
@@ -312,7 +316,7 @@ impl LinkSocksClient {
         if ws_sender.is_none() {
             return Err("Client not connected".to_string());
         }
-        
+
         // TODO: Implement connector token addition
         Ok(())
     }
@@ -321,7 +325,7 @@ impl LinkSocksClient {
     pub async fn close(&self) {
         // Notify shutdown
         self.shutdown.notify_one();
-        
+
         // Close SOCKS server listener if it exists
         let mut listener = self.socks_listener.lock().await;
         if let Some(l) = listener.take() {

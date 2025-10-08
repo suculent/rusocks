@@ -10,7 +10,7 @@ use std::sync::Arc;
 pub struct ApiHandler {
     /// Server instance
     server: Arc<LinkSocksServer>,
-    
+
     /// API key for authentication
     api_key: String,
 }
@@ -20,10 +20,10 @@ pub struct ApiHandler {
 struct ApiResponse<T> {
     /// Success status
     success: bool,
-    
+
     /// Error message if success is false
     error: Option<String>,
-    
+
     /// Data if success is true
     data: Option<T>,
 }
@@ -33,10 +33,10 @@ struct ApiResponse<T> {
 struct TokenInfo {
     /// Token
     token: String,
-    
+
     /// Port
     port: Option<u16>,
-    
+
     /// Client count
     client_count: usize,
 }
@@ -46,13 +46,13 @@ struct TokenInfo {
 struct ServerStatus {
     /// Total client count
     client_count: usize,
-    
+
     /// Forward token count
     forward_token_count: usize,
-    
+
     /// Reverse token count
     reverse_token_count: usize,
-    
+
     /// Connector token count
     connector_token_count: usize,
 }
@@ -62,19 +62,19 @@ struct ServerStatus {
 struct AddTokenRequest {
     /// Token (optional)
     token: Option<String>,
-    
+
     /// Port (optional)
     port: Option<u16>,
-    
+
     /// Username (optional)
     username: Option<String>,
-    
+
     /// Password (optional)
     password: Option<String>,
-    
+
     /// Allow manage connector
     allow_manage_connector: Option<bool>,
-    
+
     /// Reverse mode
     reverse: bool,
 }
@@ -84,7 +84,7 @@ struct AddTokenRequest {
 struct AddConnectorRequest {
     /// Connector token (optional)
     connector_token: Option<String>,
-    
+
     /// Reverse token
     reverse_token: String,
 }
@@ -112,7 +112,7 @@ impl ApiHandler {
                 ))
                 .unwrap());
         }
-        
+
         // Route request
         match (req.method(), req.uri().path()) {
             (&Method::GET, "/api/status") => self.handle_status().await,
@@ -215,7 +215,10 @@ impl ApiHandler {
     }
 
     /// Handle add connector request
-    async fn handle_add_connector(&self, _req: Request<Body>) -> Result<Response<Body>, Infallible> {
+    async fn handle_add_connector(
+        &self,
+        _req: Request<Body>,
+    ) -> Result<Response<Body>, Infallible> {
         // TODO: Implement add connector
         Ok(Response::builder()
             .status(StatusCode::OK)

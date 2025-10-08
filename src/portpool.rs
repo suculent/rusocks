@@ -30,7 +30,7 @@ impl PortPool {
     /// Returns 0 if no ports are available
     pub fn get(&self, preferred_port: Option<u16>) -> u16 {
         let mut used = self.used.lock().unwrap();
-        
+
         // Try to use preferred port if specified
         if let Some(port) = preferred_port {
             if port >= self.min && port <= self.max && !used.contains(&port) {
@@ -38,7 +38,7 @@ impl PortPool {
                 return port;
             }
         }
-        
+
         // Find an available port
         for port in self.min..=self.max {
             if !used.contains(&port) {
@@ -46,7 +46,7 @@ impl PortPool {
                 return port;
             }
         }
-        
+
         // No ports available
         0
     }

@@ -131,7 +131,9 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
                 _ => return Err(format!("Invalid duration unit: {}", c)),
             };
 
-            let value: f64 = current_num.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+            let value: f64 = current_num
+                .parse()
+                .map_err(|e: std::num::ParseFloatError| e.to_string())?;
             let nanos = (value * unit.as_nanos() as f64) as u64;
             result += Duration::from_nanos(nanos);
             current_num.clear();
@@ -155,10 +157,10 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
 pub struct LogEntry {
     /// Logger ID
     pub logger_id: String,
-    
+
     /// Log message
     pub message: String,
-    
+
     /// Timestamp (Unix timestamp in nanoseconds)
     pub time: u64,
 }
@@ -253,7 +255,7 @@ pub async fn wait_for_log_entries(timeout_ms: u64) -> Vec<LogEntry> {
 
     // Create a notification channel for this listener
     let (notify_tx, mut notify_rx) = mpsc::channel(1);
-    
+
     // Register the channel
     let index;
     {
@@ -327,8 +329,11 @@ impl PythonLogger {
     /// Log a message at the specified level
     pub fn log(&self, level: Level, message: &str) {
         if level >= self.level {
-            let formatted = format!("{{\"level\":\"{}\",\"message\":\"{}\"}}", 
-                level.as_str(), message);
+            let formatted = format!(
+                "{{\"level\":\"{}\",\"message\":\"{}\"}}",
+                level.as_str(),
+                message
+            );
             add_log_entry(&self.id, &formatted);
         }
     }

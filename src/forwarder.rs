@@ -12,13 +12,13 @@ use tokio::sync::Mutex;
 pub struct Forwarder {
     /// Source address
     source: SocketAddr,
-    
+
     /// Target address
     target: SocketAddr,
-    
+
     /// Buffer size
     buffer_size: usize,
-    
+
     /// Listener
     listener: Arc<Mutex<Option<TcpListener>>>,
 }
@@ -39,25 +39,26 @@ impl Forwarder {
         // Create listener
         let listener = TcpListener::bind(self.source).await?;
         info!("Forwarder listening on {}", self.source);
-        
+
         // Store listener in the struct
         *self.listener.lock().await = Some(listener);
-        
+
         // Create a new listener for accepting connections
         let accept_listener = TcpListener::bind(self.source).await?;
-        
+
         // Accept connections
         loop {
             match accept_listener.accept().await {
                 Ok((inbound, addr)) => {
                     info!("Accepted connection from {}", addr);
-                    
+
                     // Handle connection
                     let target = self.target;
                     let buffer_size = self.buffer_size;
-                    
+
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_connection(inbound, target, buffer_size).await {
+                        if let Err(e) = Self::handle_connection(inbound, target, buffer_size).await
+                        {
                             error!("Connection error: {}", e);
                         }
                     });
@@ -83,11 +84,11 @@ impl Forwarder {
                 return Err(e);
             }
         };
-        
+
         // Copy data in both directions
         let (mut ri, mut wi) = inbound.split();
         let (mut ro, mut wo) = outbound.split();
-        
+
         let client_to_server = async {
             let mut buffer = vec![0u8; buffer_size];
             loop {
@@ -108,11 +109,11 @@ impl Forwarder {
                     }
                 }
             }
-            
+
             // Shutdown write to signal EOF
             let _ = wo.shutdown().await;
         };
-        
+
         let server_to_client = async {
             let mut buffer = vec![0u8; buffer_size];
             loop {
@@ -133,17 +134,17 @@ impl Forwarder {
                     }
                 }
             }
-            
+
             // Shutdown write to signal EOF
             let _ = wi.shutdown().await;
         };
-        
+
         // Run both directions concurrently
         tokio::select! {
             _ = client_to_server => {}
             _ = server_to_client => {}
         }
-        
+
         Ok(())
     }
 

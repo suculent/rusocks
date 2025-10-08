@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::{
-    tungstenite::{Error as WsError, Message as WsMessage, client::IntoClientRequest},
+    tungstenite::{client::IntoClientRequest, Error as WsError, Message as WsMessage},
     WebSocketStream,
 };
 use url::Url;
@@ -19,26 +19,23 @@ use uuid::Uuid;
 pub struct WSConn {
     /// Connection ID
     id: Uuid,
-    
+
     /// Client IP address
     client_ip: Arc<RwLock<String>>,
-    
+
     /// Connection label
     label: Arc<RwLock<String>>,
-    
+
     /// WebSocket sender
     sender: mpsc::Sender<WsMessage>,
-    
+
     /// Closed flag
     closed: Arc<Mutex<bool>>,
 }
 
 impl WSConn {
     /// Create a new WebSocket connection
-    pub fn new(
-        sender: mpsc::Sender<WsMessage>,
-        label: &str,
-    ) -> Self {
+    pub fn new(sender: mpsc::Sender<WsMessage>, label: &str) -> Self {
         WSConn {
             id: Uuid::new_v4(),
             client_ip: Arc::new(RwLock::new(String::new())),
@@ -73,12 +70,15 @@ impl WSConn {
     }
 
     /// Write a message to the WebSocket
-    pub async fn write_message<T: Message + serde::Serialize>(&self, message: T) -> Result<(), String> {
+    pub async fn write_message<T: Message + serde::Serialize>(
+        &self,
+        message: T,
+    ) -> Result<(), String> {
         let json = match serde_json::to_string(&message) {
             Ok(json) => json,
             Err(e) => return Err(format!("Failed to serialize message: {}", e)),
         };
-        
+
         self.write_raw_message(WsMessage::Text(json)).await
     }
 
@@ -89,7 +89,7 @@ impl WSConn {
         if *closed {
             return Err("Connection closed".to_string());
         }
-        
+
         // Send message
         match self.sender.send(message).await {
             Ok(_) => Ok(()),
@@ -102,7 +102,7 @@ impl WSConn {
         let mut closed = self.closed.lock().await;
         if !*closed {
             *closed = true;
-            
+
             // Send close message
             let _ = self.sender.send(WsMessage::Close(None)).await;
         }
@@ -113,24 +113,22 @@ impl WSConn {
 pub struct WSHandler {
     /// WebSocket stream
     stream: WebSocketStream<TcpStream>,
-    
+
     /// Message sender
     sender: mpsc::Sender<WsMessage>,
-    
+
     /// Message receiver
     receiver: mpsc::Receiver<WsMessage>,
-    
+
     /// Closed flag
     closed: Arc<Mutex<bool>>,
 }
 
 impl WSHandler {
     /// Create a new WebSocket handler
-    pub fn new(
-        stream: WebSocketStream<TcpStream>,
-    ) -> (Self, mpsc::Sender<WsMessage>) {
+    pub fn new(stream: WebSocketStream<TcpStream>) -> (Self, mpsc::Sender<WsMessage>) {
         let (sender, receiver) = mpsc::channel(100);
-        
+
         (
             WSHandler {
                 stream,
@@ -150,11 +148,11 @@ impl WSHandler {
         let (mut ws_sender, mut ws_receiver) = stream.split();
         // Put back a dummy stream
         self.stream = unsafe { std::mem::zeroed() };
-        
+
         // Reader task
         let sender = self.sender.clone();
         let closed = self.closed.clone();
-        
+
         tokio::spawn(async move {
             while let Some(msg) = ws_receiver.next().await {
                 match msg {
@@ -166,7 +164,7 @@ impl WSHandler {
                             *c = true;
                             break;
                         }
-                        
+
                         // Forward message
                         if let Err(e) = sender.send(msg).await {
                             error!("Failed to forward message: {}", e);
@@ -179,17 +177,17 @@ impl WSHandler {
                     }
                 }
             }
-            
+
             // Connection closed
             let mut c = closed.lock().await;
             *c = true;
         });
-        
+
         // Writer task
         // Can't clone receiver, so we need to take ownership of it
         let mut receiver = std::mem::replace(&mut self.receiver, mpsc::channel(1).1);
         let closed = self.closed.clone();
-        
+
         tokio::spawn(async move {
             while let Some(msg) = receiver.recv().await {
                 // Check if closed
@@ -197,19 +195,19 @@ impl WSHandler {
                 if *c {
                     break;
                 }
-                
+
                 // Send message
                 if let Err(e) = ws_sender.send(msg).await {
                     error!("Failed to send message: {}", e);
                     break;
                 }
             }
-            
+
             // Connection closed
             let mut c = closed.lock().await;
             *c = true;
         });
-        
+
         Ok(())
     }
 
@@ -236,7 +234,7 @@ pub async fn connect_to_websocket(
         Ok(url) => url,
         Err(e) => return Err(format!("Invalid URL: {}", e)),
     };
-    
+
     // Connect to WebSocket server with optional custom User-Agent
     let request = match url.clone().into_client_request() {
         Ok(mut request) => {
@@ -249,16 +247,16 @@ pub async fn connect_to_websocket(
                 );
             }
             request
-        },
+        }
         Err(e) => return Err(format!("Failed to create WebSocket request: {}", e)),
     };
-    
+
     // Connect with the request
     let (_ws_stream, _) = match tokio_tungstenite::connect_async(request).await {
         Ok(conn) => conn,
         Err(e) => return Err(format!("Failed to connect to WebSocket server: {}", e)),
     };
-    
+
     // Create handler
     // Convert the MaybeTlsStream to TcpStream for aarch64 compatibility
     // This is a workaround and might not work in all cases
@@ -267,10 +265,11 @@ pub async fn connect_to_websocket(
     let ws_stream_tcp = WebSocketStream::from_raw_socket(
         tcp_stream,
         tokio_tungstenite::tungstenite::protocol::Role::Client,
-        None
-    ).await;
-    
+        None,
+    )
+    .await;
+
     let (handler, sender) = WSHandler::new(ws_stream_tcp);
-    
+
     Ok((handler, sender))
 }

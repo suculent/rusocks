@@ -1,8 +1,6 @@
 //! Relay implementation for rusocks
 
-use crate::message::{
-    ConnectMessage, ConnectResponseMessage, DataMessage, DisconnectMessage,
-};
+use crate::message::{ConnectMessage, ConnectResponseMessage, DataMessage, DisconnectMessage};
 use log::error;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -29,22 +27,22 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct RelayOption {
     /// Buffer size for data transfer
     pub buffer_size: usize,
-    
+
     /// Channel timeout
     pub channel_timeout: Duration,
-    
+
     /// Connect timeout
     pub connect_timeout: Duration,
-    
+
     /// Whether to use fast open
     pub fast_open: bool,
-    
+
     /// Upstream SOCKS5 proxy
     pub upstream_proxy: Option<String>,
-    
+
     /// Upstream SOCKS5 proxy username
     pub upstream_username: Option<String>,
-    
+
     /// Upstream SOCKS5 proxy password
     pub upstream_password: Option<String>,
 }
@@ -69,31 +67,31 @@ impl RelayOption {
         self.buffer_size = size;
         self
     }
-    
+
     /// Set the channel timeout
     pub fn with_channel_timeout(mut self, timeout: Duration) -> Self {
         self.channel_timeout = timeout;
         self
     }
-    
+
     /// Set the connect timeout
     pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
         self
     }
-    
+
     /// Set whether to use fast open
     pub fn with_fast_open(mut self, fast_open: bool) -> Self {
         self.fast_open = fast_open;
         self
     }
-    
+
     /// Set the upstream SOCKS5 proxy
     pub fn with_upstream_proxy(mut self, proxy: String) -> Self {
         self.upstream_proxy = Some(proxy);
         self
     }
-    
+
     /// Set the upstream SOCKS5 proxy authentication
     pub fn with_upstream_auth(mut self, username: String, password: String) -> Self {
         self.upstream_username = Some(username);
@@ -106,10 +104,10 @@ impl RelayOption {
 enum ChannelState {
     /// Waiting for connection
     Connecting,
-    
+
     /// Connected
     Connected,
-    
+
     /// Disconnected
     Disconnected,
 }
@@ -118,16 +116,16 @@ enum ChannelState {
 struct ChannelInfo {
     /// Channel ID
     id: Uuid,
-    
+
     /// Channel state
     state: ChannelState,
-    
+
     /// TCP stream
     stream: Option<TcpStream>,
-    
+
     /// WebSocket sender
     ws_sender: mpsc::Sender<WsMessage>,
-    
+
     /// Message queue
     message_queue: mpsc::Receiver<Vec<u8>>,
 }
@@ -136,10 +134,10 @@ struct ChannelInfo {
 pub struct Relay {
     /// Relay options
     options: RelayOption,
-    
+
     /// Channels
     channels: Arc<RwLock<HashMap<Uuid, Arc<Mutex<ChannelInfo>>>>>,
-    
+
     /// Fast open success channels
     fast_open_success: Arc<RwLock<HashMap<Uuid, bool>>>,
 }
@@ -167,10 +165,10 @@ impl Relay {
     ) -> Result<(), String> {
         let channel_id = connect_msg.channel_id;
         let address = connect_msg.address;
-        
+
         // Create message queue
         let (queue_tx, queue_rx) = mpsc::channel(1000);
-        
+
         // Create channel info
         let channel_info = Arc::new(Mutex::new(ChannelInfo {
             id: channel_id,
@@ -179,10 +177,13 @@ impl Relay {
             ws_sender: ws_sender.clone(),
             message_queue: queue_rx,
         }));
-        
+
         // Store channel info
-        self.channels.write().await.insert(channel_id, channel_info.clone());
-        
+        self.channels
+            .write()
+            .await
+            .insert(channel_id, channel_info.clone());
+
         // Connect to the target
         let addr = match address.parse::<SocketAddr>() {
             Ok(addr) => addr,
@@ -216,37 +217,35 @@ impl Relay {
                 }
             }
         };
-        
+
         // Connect with timeout
-        let connect_result = timeout(
-            self.options.connect_timeout,
-            TcpStream::connect(addr),
-        ).await;
-        
+        let connect_result = timeout(self.options.connect_timeout, TcpStream::connect(addr)).await;
+
         match connect_result {
             Ok(Ok(stream)) => {
                 // Connection successful
                 let mut channel = channel_info.lock().await;
                 channel.state = ChannelState::Connected;
-                
+
                 // Send success response
                 let response = ConnectResponseMessage::success(channel_id);
                 let _ = ws_sender
                     .send(WsMessage::Text(serde_json::to_string(&response).unwrap()))
                     .await;
-                
+
                 // Create a new connection for data transfer
                 let transfer_stream = match TcpStream::connect(addr).await {
                     Ok(stream) => stream,
                     Err(e) => return Err(format!("Failed to connect: {}", e)),
                 };
-                
+
                 // Store the original stream in the channel
                 channel.stream = Some(stream);
-                
+
                 // Start data transfer with the new stream
-                self.start_data_transfer(channel_id, transfer_stream, queue_tx).await;
-                
+                self.start_data_transfer(channel_id, transfer_stream, queue_tx)
+                    .await;
+
                 Ok(())
             }
             Ok(Err(e)) => {
@@ -258,25 +257,23 @@ impl Relay {
                 let _ = ws_sender
                     .send(WsMessage::Text(serde_json::to_string(&response).unwrap()))
                     .await;
-                
+
                 // Remove channel
                 self.channels.write().await.remove(&channel_id);
-                
+
                 Err(format!("Connection failed: {}", e))
             }
             Err(_) => {
                 // Connection timeout
-                let response = ConnectResponseMessage::failure(
-                    channel_id,
-                    "Connection timeout".to_string(),
-                );
+                let response =
+                    ConnectResponseMessage::failure(channel_id, "Connection timeout".to_string());
                 let _ = ws_sender
                     .send(WsMessage::Text(serde_json::to_string(&response).unwrap()))
                     .await;
-                
+
                 // Remove channel
                 self.channels.write().await.remove(&channel_id);
-                
+
                 Err("Connection timeout".to_string())
             }
         }
@@ -293,11 +290,11 @@ impl Relay {
         let channel_id_clone = channel_id;
         let relay_clone1 = self.clone();
         let relay_clone2 = self.clone();
-        
+
         // Read from TCP and send to WebSocket
         tokio::spawn(async move {
             let mut buffer = vec![0u8; relay_clone1.options.buffer_size];
-            
+
             loop {
                 match stream.read(&mut buffer).await {
                     Ok(0) => {
@@ -318,19 +315,19 @@ impl Relay {
                     }
                 }
             }
-            
+
             // Disconnect
             relay_clone1.disconnect_channel(channel_id_clone).await;
         });
-        
+
         // Read from WebSocket and send to TCP
         // Clone channels to avoid borrowing self
         let channels = self.channels.clone();
-        
+
         tokio::spawn(async move {
             if let Some(channel_info) = channels.read().await.get(&channel_id) {
                 let mut channel = channel_info.lock().await;
-                
+
                 while let Some(data) = channel.message_queue.recv().await {
                     if let Some(stream) = &mut channel.stream {
                         if let Err(e) = stream.write_all(&data).await {
@@ -343,7 +340,7 @@ impl Relay {
                     }
                 }
             }
-            
+
             // Disconnect
             relay_clone2.disconnect_channel(channel_id).await;
         });
@@ -353,22 +350,25 @@ impl Relay {
     pub async fn disconnect_channel(&self, channel_id: Uuid) {
         if let Some(channel_info) = self.channels.read().await.get(&channel_id) {
             let mut channel = channel_info.lock().await;
-            
+
             // Send disconnect message
             let disconnect_msg = DisconnectMessage::new(channel_id);
-            let _ = channel.ws_sender
-                .send(WsMessage::Text(serde_json::to_string(&disconnect_msg).unwrap()))
+            let _ = channel
+                .ws_sender
+                .send(WsMessage::Text(
+                    serde_json::to_string(&disconnect_msg).unwrap(),
+                ))
                 .await;
-            
+
             // Close TCP stream
             if let Some(stream) = &mut channel.stream {
                 let _ = stream.shutdown().await;
             }
-            
+
             // Update state
             channel.state = ChannelState::Disconnected;
         }
-        
+
         // Remove channel
         self.channels.write().await.remove(&channel_id);
         self.fast_open_success.write().await.remove(&channel_id);
@@ -377,11 +377,11 @@ impl Relay {
     /// Handle a data message
     pub async fn handle_data_message(&self, data_msg: DataMessage) -> Result<(), String> {
         let channel_id = data_msg.channel_id;
-        
+
         // Check if channel exists
         if let Some(channel_info) = self.channels.read().await.get(&channel_id) {
             let channel = channel_info.lock().await;
-            
+
             // Check if fast open is enabled and connection is not yet confirmed
             if self.options.fast_open {
                 if let Some(success) = self.fast_open_success.read().await.get(&channel_id) {
@@ -391,7 +391,7 @@ impl Relay {
                     }
                 }
             }
-            
+
             // Check if channel is connected
             match channel.state {
                 ChannelState::Connected => {
@@ -402,14 +402,16 @@ impl Relay {
                             return Err(format!("Failed to decode data: {}", e));
                         }
                     };
-                    
+
                     // Send data to TCP stream
                     if let Some(_stream) = &channel.stream {
                         // We can't write to the stream here because it's behind a mutex
                         // Instead, we send the data to the message queue
                         // Use a different approach since mpsc::Receiver doesn't have a send method
                         // This is a placeholder - we need to restructure this part
-                        error!("Cannot send data to message_queue - receiver doesn't have send method");
+                        error!(
+                            "Cannot send data to message_queue - receiver doesn't have send method"
+                        );
                         if false {
                             return Err("Failed to send data to queue".to_string());
                         }
@@ -424,13 +426,16 @@ impl Relay {
         } else {
             return Err("Channel not found".to_string());
         }
-        
+
         Ok(())
     }
 
     /// Set connection success for fast open
     pub async fn set_connection_success(&self, channel_id: Uuid) {
-        self.fast_open_success.write().await.insert(channel_id, true);
+        self.fast_open_success
+            .write()
+            .await
+            .insert(channel_id, true);
     }
 
     /// Close the relay

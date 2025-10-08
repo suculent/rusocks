@@ -19,6 +19,10 @@ pub const PLATFORM: &str = {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
-        concat!(env!("CARGO_CFG_TARGET_OS"), "/", env!("CARGO_CFG_TARGET_ARCH"))
+        concat!(
+            env!("CARGO_CFG_TARGET_OS"),
+            "/",
+            env!("CARGO_CFG_TARGET_ARCH")
+        )
     }
 };
