@@ -1,6 +1,6 @@
 # Rusocks
 
-A Rust implementation of the LinkSocks SOCKS5 over WebSocket proxy tool.
+A Rust implementation of the SOCKS5 over WebSocket proxy tool.
 
 ## Overview
 
@@ -16,6 +16,7 @@ Rusocks is a port of the Go-based [LinkSocks](https://github.com/linksocks/links
 - HTTP API for management
 - Fast open mode for improved performance
 - Python bindings
+- Customizable User-Agent for WebSocket connections
 
 ## Usage
 
@@ -82,6 +83,36 @@ Key differences:
 - Uses Rust's type system for improved safety
 - Maintains the same command-line interface
 - Preserves the same WebSocket protocol
+
+## Advanced Features
+
+### Custom User-Agent
+
+You can customize the User-Agent header for WebSocket connections:
+
+#### In Rust:
+
+```rust
+use rusocks::client::{ClientOption, LinkSocksClient};
+
+let options = ClientOption::default()
+    .with_user_agent("MyApp/1.0 (Custom Client)".to_string());
+    
+let client = LinkSocksClient::new("token".to_string(), options);
+```
+
+#### In Python:
+
+```python
+from rusocks import Client
+
+client = Client(
+    token="token",
+    user_agent="MyApp/1.0 (Custom Client)"
+)
+```
+
+This is useful for identifying your client application or working with servers that require specific User-Agent values.
 
 ## License
 

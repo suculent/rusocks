@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::{
-    tungstenite::{Error as WsError, Message as WsMessage},
+    tungstenite::{Error as WsError, Message as WsMessage, client::IntoClientRequest},
     WebSocketStream,
 };
 use url::Url;
@@ -229,6 +229,7 @@ impl WSHandler {
 /// Connect to a WebSocket server
 pub async fn connect_to_websocket(
     url: &str,
+    user_agent: Option<&str>,
 ) -> Result<(WSHandler, mpsc::Sender<WsMessage>), String> {
     // Parse URL
     let url = match Url::parse(url) {
@@ -236,8 +237,24 @@ pub async fn connect_to_websocket(
         Err(e) => return Err(format!("Invalid URL: {}", e)),
     };
     
-    // Connect to WebSocket server
-    let (_ws_stream, _) = match tokio_tungstenite::connect_async(url.clone()).await {
+    // Connect to WebSocket server with optional custom User-Agent
+    let request = match url.clone().into_client_request() {
+        Ok(mut request) => {
+            // Set custom User-Agent if provided
+            if let Some(agent) = user_agent {
+                request.headers_mut().insert(
+                    "User-Agent",
+                    tokio_tungstenite::tungstenite::http::HeaderValue::from_str(agent)
+                        .map_err(|e| format!("Invalid User-Agent header: {}", e))?,
+                );
+            }
+            request
+        },
+        Err(e) => return Err(format!("Failed to create WebSocket request: {}", e)),
+    };
+    
+    // Connect with the request
+    let (_ws_stream, _) = match tokio_tungstenite::connect_async(request).await {
         Ok(conn) => conn,
         Err(e) => return Err(format!("Failed to connect to WebSocket server: {}", e)),
     };

@@ -1,8 +1,8 @@
 [package]
 name = "rusocks"
-version = "1.7.2"
-edition = "2021"
-authors = ["Original authors of linksocks"]
+version = "1.0.0"
+edition = "2025"
+authors = ["igraczech"]
 description = "SOCKS5 over WebSocket proxy tool"
 
 [dependencies]

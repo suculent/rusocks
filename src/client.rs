@@ -72,6 +72,9 @@ pub struct ClientOption {
     
     /// Whether to ignore environment proxy settings
     pub no_env_proxy: bool,
+    
+    /// Custom User-Agent header for WebSocket connections
+    pub user_agent: Option<String>,
 }
 
 impl Default for ClientOption {
@@ -94,6 +97,7 @@ impl Default for ClientOption {
             upstream_username: None,
             upstream_password: None,
             no_env_proxy: false,
+            user_agent: None,
         }
     }
 }
@@ -195,6 +199,12 @@ impl ClientOption {
         self.no_env_proxy = no_env_proxy;
         self
     }
+    
+    /// Set the custom User-Agent header for WebSocket connections
+    pub fn with_user_agent(mut self, user_agent: String) -> Self {
+        self.user_agent = Some(user_agent);
+        self
+    }
 }
 
 /// Channel state
@@ -268,25 +278,55 @@ impl LinkSocksClient {
 
     /// Run the client
     async fn run(&self) -> Result<(), String> {
-        // TODO: Implement client
+        // Connect to WebSocket server
+        let user_agent = self.options.user_agent.as_deref();
+        let (handler, sender) = crate::conn::connect_to_websocket(&self.options.ws_url, user_agent).await?;
+        
+        // Store the sender
+        let mut ws_sender = self.ws_sender.lock().await;
+        *ws_sender = Some(sender);
+        
+        // Start the handler
+        handler.start().await.map_err(|e| format!("Failed to start WebSocket handler: {}", e))?;
+        
+        // Notify that the client is ready
+        self.ready.notify_one();
+        
+        // Wait for shutdown
+        self.shutdown.notified().await;
+        
         Ok(())
     }
 
     /// Wait for the client to be ready
     pub async fn wait_ready(&self) -> Result<(), String> {
-        // TODO: Implement wait_ready
+        // Wait for the ready notification
+        self.ready.notified().await;
         Ok(())
     }
 
     /// Add a connector token
-    pub async fn add_connector(&self, _connector_token: &str) -> Result<(), String> {
-        // TODO: Implement add_connector
+    pub async fn add_connector(&self, connector_token: &str) -> Result<(), String> {
+        // Check if client is connected
+        let ws_sender = self.ws_sender.lock().await;
+        if ws_sender.is_none() {
+            return Err("Client not connected".to_string());
+        }
+        
+        // TODO: Implement connector token addition
         Ok(())
     }
 
     /// Close the client
     pub async fn close(&self) {
-        // TODO: Implement close
+        // Notify shutdown
+        self.shutdown.notify_one();
+        
+        // Close SOCKS server listener if it exists
+        let mut listener = self.socks_listener.lock().await;
+        if let Some(l) = listener.take() {
+            drop(l);
+        }
     }
 }
 

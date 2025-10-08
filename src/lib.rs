@@ -14,6 +14,11 @@ pub mod api;
 pub mod batchlog;
 pub mod python;
 
+#[cfg(test)]
+mod tests {
+    pub mod user_agent_test;
+}
+
 // Re-export commonly used items
 pub use crate::server::LinkSocksServer;
 pub use crate::client::LinkSocksClient;
