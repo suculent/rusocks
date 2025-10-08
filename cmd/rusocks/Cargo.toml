@@ -1,0 +1,17 @@
+[package]
+name = "rusocks-cli"
+version = "1.7.2"
+edition = "2021"
+authors = ["Original authors of linksocks"]
+description = "SOCKS5 over WebSocket proxy tool CLI"
+
+[[bin]]
+name = "rusocks"
+path = "src/main.rs"
+
+[dependencies]
+rusocks = { path = "../.." }
+tokio = { version = "1.28", features = ["full"] }
+log = "0.4"
+env_logger = "0.10"
+url = "2.4"
