@@ -40,7 +40,6 @@ jobs:
         working-directory: ./docs
 
       - name: Deploy to GitHub Pages
-        if: ${{ secrets.PAGES_DEPLOY_KEY != '' }}
         uses: peaceiris/actions-gh-pages@v4
         with:
           deploy_key: ${{ secrets.PAGES_DEPLOY_KEY }}
