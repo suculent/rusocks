@@ -1,10 +1,8 @@
 //! HTTP API implementation for rusocks
 
-use crate::server::{LinkSocksServer, ReverseTokenOptions, ReverseTokenResult};
+use crate::server::LinkSocksServer;
 use hyper::{Body, Method, Request, Response, StatusCode};
-use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 

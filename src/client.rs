@@ -1,20 +1,13 @@
 //! Client implementation for rusocks
 
-use crate::message::{
-    AuthMessage, AuthResponseMessage, ConnectMessage, ConnectResponseMessage, DataMessage,
-    DisconnectMessage, Message, PartnersMessage, ConnectorMessage, ConnectorResponseMessage,
-};
-use log::{debug, error, info, trace, warn};
+use log::error;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
-use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
-use url::Url;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
 /// Default buffer size for data transfer

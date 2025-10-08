@@ -1,23 +1,18 @@
 //! Server implementation for rusocks
 
-use crate::message::{
-    AuthMessage, AuthResponseMessage, ConnectMessage, ConnectResponseMessage, DataMessage,
-    DisconnectMessage, Message, PartnersMessage, ConnectorMessage, ConnectorResponseMessage,
-};
 use crate::portpool::PortPool;
 use crate::socket::AsyncSocketManager;
-use log::{debug, error, info, trace, warn};
+use log::{debug, info, warn};
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify, RwLock};
-use tokio::time::sleep;
-use tokio_tungstenite::{accept_async, tungstenite::Message as WsMessage};
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
 /// Default buffer size for data transfer

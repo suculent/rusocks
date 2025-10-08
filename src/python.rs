@@ -1,6 +1,6 @@
 //! Python bindings for rusocks
 
-use log::{debug, error, info, trace, warn, Level, LevelFilter};
+use log::{Level, LevelFilter};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fmt;

@@ -1,6 +1,6 @@
 //! Forwarder implementation for rusocks
 
-use log::{debug, error, info, trace, warn};
+use log::{error, info};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
