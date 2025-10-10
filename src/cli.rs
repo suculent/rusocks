@@ -640,7 +640,8 @@ impl CLI {
                     info!("  Connector Token: {}", generated_connector_token);
                 }
 
-                if let (Some(username), Some(_)) = (socks_username.as_ref(), socks_password.as_ref())
+                if let (Some(username), Some(_)) =
+                    (socks_username.as_ref(), socks_password.as_ref())
                 {
                     info!("  SOCKS5 username: {}", username);
                 }

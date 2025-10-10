@@ -142,10 +142,7 @@ impl WSHandler {
     /// Start the WebSocket handler
     pub async fn start(&mut self) -> Result<(), WsError> {
         // Start reader and writer tasks
-        let stream = self
-            .stream
-            .take()
-            .ok_or(WsError::ConnectionClosed)?;
+        let stream = self.stream.take().ok_or(WsError::ConnectionClosed)?;
         let (mut ws_sender, mut ws_receiver) = stream.split();
 
         // Reader task
