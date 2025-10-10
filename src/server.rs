@@ -180,8 +180,7 @@ pub struct ReverseTokenOptions {
     /// Whether to allow managing connectors
     pub allow_manage_connector: bool,
 }
-
-
+ 
 /// Result of adding a reverse token
 pub struct ReverseTokenResult {
     /// Token that was created or used
