@@ -236,6 +236,50 @@ struct ClientArgs {
     no_env_proxy: bool,
 }
 
+/// Structured representation of parsed proxy configuration details
+struct ProxyConfig {
+    address: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+}
+
+/// Aggregated client runtime configuration derived from CLI input
+struct ClientRunConfig {
+    token: Option<String>,
+    url: String,
+    reverse: bool,
+    connector_token: Option<String>,
+    socks_host: String,
+    socks_port: u16,
+    socks_username: Option<String>,
+    socks_password: Option<String>,
+    socks_no_wait: bool,
+    no_reconnect: bool,
+    threads: u32,
+    upstream_proxy: Option<String>,
+    fast_open: bool,
+    no_env_proxy: bool,
+}
+
+/// Aggregated server runtime configuration derived from CLI input
+struct ServerRunConfig {
+    ws_host: String,
+    ws_port: u16,
+    token: Option<String>,
+    connector_token: Option<String>,
+    connector_autonomy: bool,
+    buffer_size: usize,
+    reverse: bool,
+    socks_host: String,
+    socks_port: u16,
+    socks_username: Option<String>,
+    socks_password: Option<String>,
+    socks_nowait: bool,
+    api_key: Option<String>,
+    upstream_proxy: Option<String>,
+    fast_open: bool,
+}
+
 impl Default for CLI {
     fn default() -> Self {
         Self::new()
@@ -273,61 +317,63 @@ impl CLI {
                 no_env_proxy,
             } => {
                 self.init_logging(*debug);
-                self.run_client(
-                    token.clone(),
-                    url,
-                    *reverse,
-                    connector_token.clone(),
-                    socks_host,
-                    *socks_port,
-                    socks_username.clone(),
-                    socks_password.clone(),
-                    *socks_no_wait,
-                    *no_reconnect,
-                    *threads,
-                    upstream_proxy.clone(),
-                    *fast_open,
-                    *no_env_proxy,
-                )
+                let config = ClientRunConfig {
+                    token: token.clone(),
+                    url: url.clone(),
+                    reverse: *reverse,
+                    connector_token: connector_token.clone(),
+                    socks_host: socks_host.clone(),
+                    socks_port: *socks_port,
+                    socks_username: socks_username.clone(),
+                    socks_password: socks_password.clone(),
+                    socks_no_wait: *socks_no_wait,
+                    no_reconnect: *no_reconnect,
+                    threads: *threads,
+                    upstream_proxy: upstream_proxy.clone(),
+                    fast_open: *fast_open,
+                    no_env_proxy: *no_env_proxy,
+                };
+                self.run_client(config)
             }
             Commands::Connector { client_args } => {
                 self.init_logging(client_args.debug);
-                self.run_client(
-                    client_args.token.clone(),
-                    &client_args.url,
-                    client_args.reverse,
-                    client_args.connector_token.clone(),
-                    &client_args.socks_host,
-                    client_args.socks_port,
-                    client_args.socks_username.clone(),
-                    client_args.socks_password.clone(),
-                    client_args.socks_no_wait,
-                    client_args.no_reconnect,
-                    client_args.threads,
-                    client_args.upstream_proxy.clone(),
-                    client_args.fast_open,
-                    client_args.no_env_proxy,
-                )
+                let config = ClientRunConfig {
+                    token: client_args.token.clone(),
+                    url: client_args.url.clone(),
+                    reverse: client_args.reverse,
+                    connector_token: client_args.connector_token.clone(),
+                    socks_host: client_args.socks_host.clone(),
+                    socks_port: client_args.socks_port,
+                    socks_username: client_args.socks_username.clone(),
+                    socks_password: client_args.socks_password.clone(),
+                    socks_no_wait: client_args.socks_no_wait,
+                    no_reconnect: client_args.no_reconnect,
+                    threads: client_args.threads,
+                    upstream_proxy: client_args.upstream_proxy.clone(),
+                    fast_open: client_args.fast_open,
+                    no_env_proxy: client_args.no_env_proxy,
+                };
+                self.run_client(config)
             }
             Commands::Provider { client_args } => {
                 self.init_logging(client_args.debug);
-                // Force reverse to true for provider
-                self.run_client(
-                    client_args.token.clone(),
-                    &client_args.url,
-                    true, // Always use reverse mode
-                    client_args.connector_token.clone(),
-                    &client_args.socks_host,
-                    client_args.socks_port,
-                    client_args.socks_username.clone(),
-                    client_args.socks_password.clone(),
-                    client_args.socks_no_wait,
-                    client_args.no_reconnect,
-                    client_args.threads,
-                    client_args.upstream_proxy.clone(),
-                    client_args.fast_open,
-                    client_args.no_env_proxy,
-                )
+                let config = ClientRunConfig {
+                    token: client_args.token.clone(),
+                    url: client_args.url.clone(),
+                    reverse: true,
+                    connector_token: client_args.connector_token.clone(),
+                    socks_host: client_args.socks_host.clone(),
+                    socks_port: client_args.socks_port,
+                    socks_username: client_args.socks_username.clone(),
+                    socks_password: client_args.socks_password.clone(),
+                    socks_no_wait: client_args.socks_no_wait,
+                    no_reconnect: client_args.no_reconnect,
+                    threads: client_args.threads,
+                    upstream_proxy: client_args.upstream_proxy.clone(),
+                    fast_open: client_args.fast_open,
+                    no_env_proxy: client_args.no_env_proxy,
+                };
+                self.run_client(config)
             }
             Commands::Server {
                 ws_host,
@@ -348,23 +394,24 @@ impl CLI {
                 fast_open,
             } => {
                 self.init_logging(*debug);
-                self.run_server(
-                    ws_host,
-                    *ws_port,
-                    token.clone(),
-                    connector_token.clone(),
-                    *connector_autonomy,
-                    *buffer_size,
-                    *reverse,
-                    socks_host,
-                    *socks_port,
-                    socks_username.clone(),
-                    socks_password.clone(),
-                    *socks_nowait,
-                    api_key.clone(),
-                    upstream_proxy.clone(),
-                    *fast_open,
-                )
+                let config = ServerRunConfig {
+                    ws_host: ws_host.clone(),
+                    ws_port: *ws_port,
+                    token: token.clone(),
+                    connector_token: connector_token.clone(),
+                    connector_autonomy: *connector_autonomy,
+                    buffer_size: *buffer_size,
+                    reverse: *reverse,
+                    socks_host: socks_host.clone(),
+                    socks_port: *socks_port,
+                    socks_username: socks_username.clone(),
+                    socks_password: socks_password.clone(),
+                    socks_nowait: *socks_nowait,
+                    api_key: api_key.clone(),
+                    upstream_proxy: upstream_proxy.clone(),
+                    fast_open: *fast_open,
+                };
+                self.run_server(config)
             }
         }
     }
@@ -383,11 +430,8 @@ impl CLI {
             .init();
     }
 
-    /// Parse SOCKS5 proxy URL and return address, username, and password
-    fn parse_socks_proxy(
-        &self,
-        proxy_url: Option<String>,
-    ) -> Result<(Option<String>, Option<String>, Option<String>), Box<dyn Error>> {
+    /// Parse SOCKS5 proxy URL and return structured configuration
+    fn parse_socks_proxy(&self, proxy_url: Option<String>) -> Result<ProxyConfig, Box<dyn Error>> {
         if let Some(url_str) = proxy_url {
             let url = Url::parse(&url_str)?;
 
@@ -407,46 +451,56 @@ impl CLI {
             let port = url.port().unwrap_or(9870);
             let address = format!("{}:{}", host, port);
 
-            Ok((Some(address), username, password))
+            Ok(ProxyConfig {
+                address: Some(address),
+                username,
+                password,
+            })
         } else {
-            Ok((None, None, None))
+            Ok(ProxyConfig {
+                address: None,
+                username: None,
+                password: None,
+            })
         }
     }
 
     /// Run the client with the given options
     #[tokio::main]
-    async fn run_client(
-        &self,
-        token: Option<String>,
-        url: &str,
-        reverse: bool,
-        connector_token: Option<String>,
-        socks_host: &str,
-        socks_port: u16,
-        socks_username: Option<String>,
-        socks_password: Option<String>,
-        socks_no_wait: bool,
-        no_reconnect: bool,
-        threads: u32,
-        upstream_proxy: Option<String>,
-        fast_open: bool,
-        no_env_proxy: bool,
-    ) -> Result<(), Box<dyn Error>> {
-        // Parse proxy URL
-        let (proxy_addr, proxy_user, proxy_pass) = self.parse_socks_proxy(upstream_proxy)?;
+    async fn run_client(&self, config: ClientRunConfig) -> Result<(), Box<dyn Error>> {
+        let ClientRunConfig {
+            token,
+            url,
+            reverse,
+            connector_token,
+            socks_host,
+            socks_port,
+            socks_username,
+            socks_password,
+            socks_no_wait,
+            no_reconnect,
+            threads,
+            upstream_proxy,
+            fast_open,
+            no_env_proxy,
+        } = config;
 
-        // Create client options
+        let ProxyConfig {
+            address: proxy_addr,
+            username: proxy_user,
+            password: proxy_pass,
+        } = self.parse_socks_proxy(upstream_proxy)?;
+
         let mut client_opt = ClientOption::default()
-            .with_ws_url(url.to_string())
+            .with_ws_url(url)
             .with_reverse(reverse)
-            .with_socks_host(socks_host.to_string())
+            .with_socks_host(socks_host)
             .with_socks_port(socks_port)
             .with_socks_wait_server(!socks_no_wait)
             .with_reconnect(!no_reconnect)
             .with_threads(threads)
             .with_no_env_proxy(no_env_proxy);
 
-        // Add new options
         if let Some(addr) = proxy_addr {
             client_opt = client_opt.with_upstream_proxy(addr);
             if let Some(user) = proxy_user {
@@ -458,7 +512,6 @@ impl CLI {
             client_opt = client_opt.with_fast_open(true);
         }
 
-        // Add authentication options if provided
         if let Some(username) = socks_username {
             client_opt = client_opt.with_socks_username(username);
         }
@@ -467,17 +520,14 @@ impl CLI {
             client_opt = client_opt.with_socks_password(password);
         }
 
-        // Create client instance
-        let token = token.unwrap_or_default();
-        let client = LinkSocksClient::new(token, client_opt);
+        let token_value = token.unwrap_or_default();
+        let client = LinkSocksClient::new(token_value, client_opt);
 
-        // Wait for client to be ready
         if let Err(err) = client.wait_ready().await {
             error!("Exit due to error: {}", err);
             return Err(err.into());
         }
 
-        // Add connector token if provided
         if let Some(conn_token) = connector_token {
             if reverse {
                 if let Err(err) = client.add_connector(&conn_token).await {
@@ -487,12 +537,10 @@ impl CLI {
             }
         }
 
-        // Wait for Ctrl+C signal
         match signal::ctrl_c().await {
             Ok(()) => {
                 info!("Shutting down client...");
                 client.close().await;
-                // Allow time for log messages to be written before exit
                 sleep(Duration::from_millis(100)).await;
                 Ok(())
             }
@@ -505,35 +553,38 @@ impl CLI {
 
     /// Run the server with the given options
     #[tokio::main]
-    async fn run_server(
-        &self,
-        ws_host: &str,
-        ws_port: u16,
-        token: Option<String>,
-        connector_token: Option<String>,
-        connector_autonomy: bool,
-        buffer_size: usize,
-        reverse: bool,
-        socks_host: &str,
-        socks_port: u16,
-        socks_username: Option<String>,
-        socks_password: Option<String>,
-        _socks_nowait: bool,
-        api_key: Option<String>,
-        upstream_proxy: Option<String>,
-        fast_open: bool,
-    ) -> Result<(), Box<dyn Error>> {
-        // Parse proxy URL
-        let (proxy_addr, proxy_user, proxy_pass) = self.parse_socks_proxy(upstream_proxy)?;
+    async fn run_server(&self, config: ServerRunConfig) -> Result<(), Box<dyn Error>> {
+        let ServerRunConfig {
+            ws_host,
+            ws_port,
+            token,
+            connector_token,
+            connector_autonomy,
+            buffer_size,
+            reverse,
+            socks_host,
+            socks_port,
+            socks_username,
+            socks_password,
+            socks_nowait,
+            api_key,
+            upstream_proxy,
+            fast_open,
+        } = config;
 
-        // Create server options
+        let ProxyConfig {
+            address: proxy_addr,
+            username: proxy_user,
+            password: proxy_pass,
+        } = self.parse_socks_proxy(upstream_proxy)?;
+
         let mut server_opt = ServerOption::default()
-            .with_ws_host(ws_host.to_string())
+            .with_ws_host(ws_host.clone())
             .with_ws_port(ws_port)
-            .with_socks_host(socks_host.to_string())
-            .with_buffer_size(buffer_size);
+            .with_socks_host(socks_host.clone())
+            .with_buffer_size(buffer_size)
+            .with_socks_wait_client(!socks_nowait);
 
-        // Add new options
         if let Some(addr) = proxy_addr {
             server_opt = server_opt.with_upstream_proxy(addr);
             if let Some(user) = proxy_user {
@@ -545,17 +596,13 @@ impl CLI {
             server_opt = server_opt.with_fast_open(true);
         }
 
-        // Add API key if provided
         if let Some(ref key) = api_key {
             server_opt = server_opt.with_api(key.clone());
         }
 
-        // Create server instance
         let server = LinkSocksServer::new(server_opt);
 
-        // Skip token operations if API key is provided
         if api_key.is_none() {
-            // Add token based on mode
             if reverse {
                 let reverse_opts = ReverseTokenOptions {
                     token: token.clone(),
@@ -577,9 +624,9 @@ impl CLI {
                     .into());
                 }
 
-                let mut use_connector_token = String::new();
+                let mut generated_connector_token = String::new();
                 if !connector_autonomy {
-                    use_connector_token = server
+                    generated_connector_token = server
                         .add_connector_token(connector_token, &use_token)
                         .await?;
                 }
@@ -590,11 +637,12 @@ impl CLI {
                 info!("  SOCKS5 port: {}", port);
 
                 if !connector_autonomy {
-                    info!("  Connector Token: {}", use_connector_token);
+                    info!("  Connector Token: {}", generated_connector_token);
                 }
 
-                if socks_username.is_some() && socks_password.is_some() {
-                    info!("  SOCKS5 username: {}", socks_username.unwrap());
+                if let (Some(username), Some(_)) = (socks_username.as_ref(), socks_password.as_ref())
+                {
+                    info!("  SOCKS5 username: {}", username);
                 }
 
                 if connector_autonomy {
@@ -608,15 +656,12 @@ impl CLI {
             }
         }
 
-        // Wait for server to be ready
         server.wait_ready().await?;
 
-        // Wait for Ctrl+C signal
         match signal::ctrl_c().await {
             Ok(()) => {
                 info!("Shutting down server...");
                 server.close().await;
-                // Allow time for log messages to be written before exit
                 sleep(Duration::from_millis(100)).await;
                 Ok(())
             }

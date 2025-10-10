@@ -68,7 +68,7 @@ impl SocketManager {
 
         if let Some(sock) = sockets.get_mut(&port) {
             sock.ref_count -= 1;
-            if sock.ref_count <= 0 {
+            if sock.ref_count == 0 {
                 // Start delayed cleanup
                 sock.close_timer = Some(Instant::now() + Duration::from_secs(30));
                 debug!("Socket scheduled for delayed cleanup: port {}", port);
@@ -166,7 +166,7 @@ impl AsyncSocketManager {
 
         if let Some(sock) = sockets.get_mut(&port) {
             sock.ref_count -= 1;
-            if sock.ref_count <= 0 {
+            if sock.ref_count == 0 {
                 // Start delayed cleanup
                 sock.close_timer = Some(Instant::now() + Duration::from_secs(30));
                 debug!(

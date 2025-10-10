@@ -5,7 +5,6 @@ use futures_util::{SinkExt, StreamExt};
 use log::error;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::{
@@ -18,7 +17,7 @@ use uuid::Uuid;
 /// WebSocket connection
 pub struct WSConn {
     /// Connection ID
-    id: Uuid,
+    _id: Uuid,
 
     /// Client IP address
     client_ip: Arc<RwLock<String>>,
@@ -37,7 +36,7 @@ impl WSConn {
     /// Create a new WebSocket connection
     pub fn new(sender: mpsc::Sender<WsMessage>, label: &str) -> Self {
         WSConn {
-            id: Uuid::new_v4(),
+            _id: Uuid::new_v4(),
             client_ip: Arc::new(RwLock::new(String::new())),
             label: Arc::new(RwLock::new(label.to_string())),
             sender,
@@ -112,7 +111,7 @@ impl WSConn {
 /// WebSocket message handler
 pub struct WSHandler {
     /// WebSocket stream
-    stream: WebSocketStream<TcpStream>,
+    stream: Option<WebSocketStream<TcpStream>>,
 
     /// Message sender
     sender: mpsc::Sender<WsMessage>,
@@ -131,7 +130,7 @@ impl WSHandler {
 
         (
             WSHandler {
-                stream,
+                stream: Some(stream),
                 sender: sender.clone(),
                 receiver,
                 closed: Arc::new(Mutex::new(false)),
@@ -143,11 +142,11 @@ impl WSHandler {
     /// Start the WebSocket handler
     pub async fn start(&mut self) -> Result<(), WsError> {
         // Start reader and writer tasks
-        // Create a new stream to avoid moving out of self.stream
-        let stream = std::mem::replace(&mut self.stream, unsafe { std::mem::zeroed() });
+        let stream = self
+            .stream
+            .take()
+            .ok_or(WsError::ConnectionClosed)?;
         let (mut ws_sender, mut ws_receiver) = stream.split();
-        // Put back a dummy stream
-        self.stream = unsafe { std::mem::zeroed() };
 
         // Reader task
         let sender = self.sender.clone();

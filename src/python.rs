@@ -11,10 +11,11 @@ use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tokio::time::sleep;
 
-/// Context functions for Python bindings
-/// These provide access to Rust's async runtime in Python
 
-/// Global runtime for Python bindings
+// Context functions for Python bindings
+// These provide access to Rust's async runtime in Python
+
+// Global runtime for Python bindings
 lazy_static::lazy_static! {
     static ref GLOBAL_RUNTIME: Mutex<Option<Runtime>> = Mutex::new(None);
     static ref GLOBAL_NOTIFY: Arc<Notify> = Arc::new(Notify::new());

@@ -1,6 +1,7 @@
 //! Relay implementation for rusocks
 
 use crate::message::{ConnectMessage, ConnectResponseMessage, DataMessage, DisconnectMessage};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use log::error;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -115,7 +116,7 @@ enum ChannelState {
 /// Channel information
 struct ChannelInfo {
     /// Channel ID
-    id: Uuid,
+    _id: Uuid,
 
     /// Channel state
     state: ChannelState,
@@ -171,7 +172,7 @@ impl Relay {
 
         // Create channel info
         let channel_info = Arc::new(Mutex::new(ChannelInfo {
-            id: channel_id,
+            _id: channel_id,
             state: ChannelState::Connecting,
             stream: None,
             ws_sender: ws_sender.clone(),
@@ -396,7 +397,7 @@ impl Relay {
             match channel.state {
                 ChannelState::Connected => {
                     // Decode data
-                    let _data = match base64::decode(&data_msg.data) {
+                    let _data = match STANDARD.decode(&data_msg.data) {
                         Ok(data) => data,
                         Err(e) => {
                             return Err(format!("Failed to decode data: {}", e));
