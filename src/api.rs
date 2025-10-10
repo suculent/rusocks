@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// API handler for LinkSocksServer
 pub struct ApiHandler {
     /// Server instance
-    server: Arc<LinkSocksServer>,
+    _server: Arc<LinkSocksServer>,
 
     /// API key for authentication
     api_key: String,
@@ -59,6 +59,7 @@ struct ServerStatus {
 
 /// Add token request
 #[derive(Serialize, Deserialize)]
+#[allow(dead_code)]
 struct AddTokenRequest {
     /// Token (optional)
     token: Option<String>,
@@ -81,6 +82,7 @@ struct AddTokenRequest {
 
 /// Add connector request
 #[derive(Serialize, Deserialize)]
+#[allow(dead_code)]
 struct AddConnectorRequest {
     /// Connector token (optional)
     connector_token: Option<String>,
@@ -92,7 +94,10 @@ struct AddConnectorRequest {
 impl ApiHandler {
     /// Create a new ApiHandler
     pub fn new(server: Arc<LinkSocksServer>, api_key: String) -> Self {
-        ApiHandler { server, api_key }
+        ApiHandler {
+            _server: server,
+            api_key,
+        }
     }
 
     /// Handle API request

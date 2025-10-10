@@ -4,7 +4,6 @@ use log::error;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -208,6 +207,7 @@ impl ClientOption {
 }
 
 /// Channel state
+#[allow(dead_code)]
 enum ChannelState {
     /// Waiting for connection
     Connecting,
@@ -220,6 +220,7 @@ enum ChannelState {
 }
 
 /// Channel information
+#[allow(dead_code)]
 struct ChannelInfo {
     /// Channel state
     state: ChannelState,
@@ -280,7 +281,7 @@ impl LinkSocksClient {
     async fn run(&self) -> Result<(), String> {
         // Connect to WebSocket server
         let user_agent = self.options.user_agent.as_deref();
-        let (handler, sender) =
+        let (mut handler, sender) =
             crate::conn::connect_to_websocket(&self.options.ws_url, user_agent).await?;
 
         // Store the sender
@@ -310,7 +311,7 @@ impl LinkSocksClient {
     }
 
     /// Add a connector token
-    pub async fn add_connector(&self, connector_token: &str) -> Result<(), String> {
+    pub async fn add_connector(&self, _connector_token: &str) -> Result<(), String> {
         // Check if client is connected
         let ws_sender = self.ws_sender.lock().await;
         if ws_sender.is_none() {

@@ -11,10 +11,10 @@ use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tokio::time::sleep;
 
-/// Context functions for Python bindings
-/// These provide access to Rust's async runtime in Python
+// Context functions for Python bindings
+// These provide access to Rust's async runtime in Python
 
-/// Global runtime for Python bindings
+// Global runtime for Python bindings
 lazy_static::lazy_static! {
     static ref GLOBAL_RUNTIME: Mutex<Option<Runtime>> = Mutex::new(None);
     static ref GLOBAL_NOTIFY: Arc<Notify> = Arc::new(Notify::new());
@@ -70,10 +70,7 @@ impl ContextWithCancel {
 
     /// Check if the context is cancelled
     pub async fn is_cancelled(&mut self) -> bool {
-        match self.cancel_rx.try_recv() {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        self.cancel_rx.try_recv().is_ok()
     }
 }
 
@@ -98,7 +95,7 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
     let mut chars = s.chars().peekable();
 
     while let Some(c) = chars.next() {
-        if c.is_digit(10) || c == '.' || c == '-' {
+        if c.is_ascii_digit() || c == '.' || c == '-' {
             current_num.push(c);
         } else if c.is_alphabetic() {
             let unit = match c {

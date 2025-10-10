@@ -1,5 +1,6 @@
 //! Message types for rusocks communication protocol
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
@@ -191,13 +192,13 @@ impl DataMessage {
         DataMessage {
             message_type: "data".to_string(),
             channel_id,
-            data: base64::encode(&data),
+            data: STANDARD.encode(data),
         }
     }
 
     /// Get the decoded data
     pub fn get_data(&self) -> Result<Vec<u8>, base64::DecodeError> {
-        base64::decode(&self.data)
+        STANDARD.decode(&self.data)
     }
 }
 

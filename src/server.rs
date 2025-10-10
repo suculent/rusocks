@@ -9,7 +9,6 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -163,6 +162,7 @@ impl ServerOption {
 }
 
 /// Options for reverse token
+#[derive(Default)]
 pub struct ReverseTokenOptions {
     /// Token to use (auto-generated if None)
     pub token: Option<String>,
@@ -180,18 +180,6 @@ pub struct ReverseTokenOptions {
     pub allow_manage_connector: bool,
 }
 
-impl Default for ReverseTokenOptions {
-    fn default() -> Self {
-        ReverseTokenOptions {
-            token: None,
-            port: None,
-            username: None,
-            password: None,
-            allow_manage_connector: false,
-        }
-    }
-}
-
 /// Result of adding a reverse token
 pub struct ReverseTokenResult {
     /// Token that was created or used
@@ -202,54 +190,58 @@ pub struct ReverseTokenResult {
 }
 
 /// Client information
+#[allow(dead_code)]
 struct ClientInfo {
     /// Client ID
-    id: Uuid,
+    _id: Uuid,
 
     /// Client WebSocket sender
-    sender: mpsc::Sender<WsMessage>,
+    _sender: mpsc::Sender<WsMessage>,
 }
 
 /// WebSocket connection
+#[allow(dead_code)]
 struct WsConn {
     /// Client ID
-    id: Uuid,
+    _id: Uuid,
 
     /// Client IP address
-    client_ip: String,
+    _client_ip: String,
 
     /// WebSocket sender
-    sender: mpsc::Sender<WsMessage>,
+    _sender: mpsc::Sender<WsMessage>,
 }
 
 /// Waiting socket
+#[allow(dead_code)]
 struct WaitingSocket {
     /// TCP listener
-    listener: TcpListener,
+    _listener: TcpListener,
 
     /// Cancel timer
-    cancel_timer: Option<tokio::time::Instant>,
+    _cancel_timer: Option<tokio::time::Instant>,
 }
 
 /// Connector cache
+#[allow(dead_code)]
 struct ConnectorCache {
     /// Maps channel_id to reverse client WebSocket connection
-    channel_id_to_client: HashMap<Uuid, mpsc::Sender<WsMessage>>,
+    _channel_id_to_client: HashMap<Uuid, mpsc::Sender<WsMessage>>,
 
     /// Maps channel_id to connector WebSocket connection
-    channel_id_to_connector: HashMap<Uuid, mpsc::Sender<WsMessage>>,
+    _channel_id_to_connector: HashMap<Uuid, mpsc::Sender<WsMessage>>,
 
     /// Maps token to list of channel_ids
-    token_cache: HashMap<String, Vec<Uuid>>,
+    _token_cache: HashMap<String, Vec<Uuid>>,
 }
 
 impl ConnectorCache {
     /// Create a new connector cache
     fn new() -> Self {
         ConnectorCache {
-            channel_id_to_client: HashMap::new(),
-            channel_id_to_connector: HashMap::new(),
-            token_cache: HashMap::new(),
+            _channel_id_to_client: HashMap::new(),
+            _channel_id_to_connector: HashMap::new(),
+            _token_cache: HashMap::new(),
         }
     }
 }
