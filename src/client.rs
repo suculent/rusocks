@@ -280,7 +280,7 @@ impl LinkSocksClient {
     async fn run(&self) -> Result<(), String> {
         // Connect to WebSocket server
         let user_agent = self.options.user_agent.as_deref();
-        let (handler, sender) =
+        let (mut handler, sender) =
             crate::conn::connect_to_websocket(&self.options.ws_url, user_agent).await?;
 
         // Store the sender

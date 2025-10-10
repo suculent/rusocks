@@ -163,6 +163,7 @@ impl ServerOption {
 }
 
 /// Options for reverse token
+#[derive(Default)]
 pub struct ReverseTokenOptions {
     /// Token to use (auto-generated if None)
     pub token: Option<String>,
@@ -180,17 +181,6 @@ pub struct ReverseTokenOptions {
     pub allow_manage_connector: bool,
 }
 
-impl Default for ReverseTokenOptions {
-    fn default() -> Self {
-        ReverseTokenOptions {
-            token: None,
-            port: None,
-            username: None,
-            password: None,
-            allow_manage_connector: false,
-        }
-    }
-}
 
 /// Result of adding a reverse token
 pub struct ReverseTokenResult {

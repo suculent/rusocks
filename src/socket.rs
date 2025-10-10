@@ -42,7 +42,7 @@ impl SocketManager {
 
             // Clone the listener
             let _addr = sock.listener.local_addr()?;
-            return Ok(sock.listener.try_clone()?);
+            return sock.listener.try_clone();
         }
 
         // Create new socket
@@ -143,7 +143,7 @@ impl AsyncSocketManager {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
         // Test that we can bind to this address
-        let listener = TcpListener::bind(&addr)?;
+        let listener = TcpListener::bind(addr)?;
         drop(listener); // Release immediately
 
         debug!("Allocated new socket address for port {}", port);

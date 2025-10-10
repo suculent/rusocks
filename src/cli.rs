@@ -236,6 +236,12 @@ struct ClientArgs {
     no_env_proxy: bool,
 }
 
+impl Default for CLI {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CLI {
     /// Creates a new CLI instance
     pub fn new() -> Self {

@@ -70,10 +70,7 @@ impl ContextWithCancel {
 
     /// Check if the context is cancelled
     pub async fn is_cancelled(&mut self) -> bool {
-        match self.cancel_rx.try_recv() {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        self.cancel_rx.try_recv().is_ok()
     }
 }
 
@@ -98,7 +95,7 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
     let mut chars = s.chars().peekable();
 
     while let Some(c) = chars.next() {
-        if c.is_digit(10) || c == '.' || c == '-' {
+        if c.is_ascii_digit() || c == '.' || c == '-' {
             current_num.push(c);
         } else if c.is_alphabetic() {
             let unit = match c {
