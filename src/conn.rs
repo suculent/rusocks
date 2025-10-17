@@ -9,8 +9,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::{
     tungstenite::{client::IntoClientRequest, Error as WsError, Message as WsMessage},
-    MaybeTlsStream,
-    WebSocketStream,
+    MaybeTlsStream, WebSocketStream,
 };
 use url::Url;
 use uuid::Uuid;
