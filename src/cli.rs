@@ -111,7 +111,7 @@ enum Commands {
         ws_host: String,
 
         /// WebSocket server listen port
-        #[clap(short = 'P', long = "port", alias = "ws-port", default_value = "8765")]
+        #[clap(short = 'p', long = "port", alias = "ws-port", default_value = "8765")]
         ws_port: u16,
 
         /// Specify auth token, auto-generate if not provided
@@ -139,12 +139,7 @@ enum Commands {
         socks_host: String,
 
         /// SOCKS5 server listen port for reverse proxy
-        #[clap(
-            short = 'p',
-            long = "socks-port",
-            short_alias = 'S',
-            default_value = "9870"
-        )]
+        #[clap(short = 'S', long = "socks-port", default_value = "9870")]
         socks_port: u16,
 
         /// SOCKS5 username for authentication

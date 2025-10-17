@@ -1,5 +1,6 @@
 use crate::portpool::PortPool;
 use crate::socket::AsyncSocketManager;
+use futures_util::{SinkExt, StreamExt};
 use log::{debug, info, warn};
 use rand::Rng;
 use sha2::{Digest, Sha256};
@@ -8,11 +9,11 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify, RwLock};
 use tokio::task::JoinHandle;
-use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::{accept_async, tungstenite::Message as WsMessage};
 use uuid::Uuid;
 
 /// Default buffer size for data transfer
@@ -654,9 +655,11 @@ impl LinkSocksServer {
         let stop_clone = stop.clone();
         let running_clone = is_running.clone();
         let address = self.ws_addr;
+        let server = self.clone();
 
         let handle = tokio::spawn(async move {
             let listener = listener;
+            let server = server;
             loop {
                 select! {
                     _ = stop_clone.notified() => {
@@ -666,7 +669,12 @@ impl LinkSocksServer {
                         match accept_res {
                             Ok((stream, addr)) => {
                                 debug!("Accepted WebSocket connection from {}", addr);
-                                drop(stream);
+                                let session_server = server.clone();
+                                tokio::spawn(async move {
+                                    if let Err(err) = session_server.handle_ws_connection(stream, addr).await {
+                                        warn!("WebSocket session error from {}: {}", addr, err);
+                                    }
+                                });
                             }
                             Err(err) => {
                                 warn!("WebSocket accept error on {}: {}", address, err);
@@ -704,6 +712,46 @@ impl LinkSocksServer {
             return Ok(());
         }
         self.ready.notified().await;
+        Ok(())
+    }
+
+    async fn handle_ws_connection(
+        &self,
+        stream: TcpStream,
+        addr: SocketAddr,
+    ) -> Result<(), String> {
+        let ws_stream = accept_async(stream)
+            .await
+            .map_err(|e| format!("Failed WebSocket handshake with {}: {}", addr, e))?;
+
+        debug!("WebSocket handshake completed for {}", addr);
+
+        let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+        while let Some(message) = ws_receiver.next().await {
+            match message {
+                Ok(WsMessage::Ping(payload)) => {
+                    ws_sender
+                        .send(WsMessage::Pong(payload))
+                        .await
+                        .map_err(|e| format!("Failed to send pong to {}: {}", addr, e))?;
+                }
+                Ok(WsMessage::Pong(_)) => {
+                    // Ignore pong frames
+                }
+                Ok(WsMessage::Close(frame)) => {
+                    let _ = ws_sender.send(WsMessage::Close(frame)).await;
+                    break;
+                }
+                Ok(msg) => {
+                    debug!("Received unsupported message from {}: {:?}", addr, msg);
+                }
+                Err(e) => {
+                    return Err(format!("WebSocket receive error from {}: {}", addr, e));
+                }
+            }
+        }
+
+        debug!("WebSocket connection closed for {}", addr);
         Ok(())
     }
 
@@ -882,13 +930,13 @@ impl LinkSocksServer {
     }
 
     async fn is_ready(&self) -> bool {
-        if {
+        let res = {
             let guard = self.ws_task.lock().await;
             guard
                 .as_ref()
                 .map(|task| task.is_running())
                 .unwrap_or(false)
-        } {
+        }; if res {
             return true;
         }
 

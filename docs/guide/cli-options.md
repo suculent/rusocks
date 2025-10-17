@@ -1,18 +1,18 @@
 # Command-line Options
 
-LinkSocks is a versatile SOCKS proxy implementation over the WebSocket protocol, supporting both forward and reverse proxy configurations. This guide provides detailed instructions on how to use LinkSocks via the command line.
+RuSocks is a versatile SOCKS proxy implementation over the WebSocket protocol, supporting both forward and reverse proxy configurations. This guide provides detailed instructions on how to use RuSocks via the command line.
 
 ## Basic Commands
 
-LinkSocks provides two primary commands: `server` and `client`.
+RuSocks provides two primary commands: `server` and `client`.
 
 ### Server
 
-Starts the LinkSocks server which listens for incoming WebSocket connections and manages SOCKS proxy services.
+Starts the RuSocks server which listens for incoming WebSocket connections and manages SOCKS proxy services.
 
 ### Client
 
-Starts the LinkSocks client which connects to the server and provides SOCKS proxy functionality to the local machine.
+Starts the RuSocks client which connects to the server and provides SOCKS proxy functionality to the local machine.
 
 ## Server Options
 
