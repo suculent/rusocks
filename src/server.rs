@@ -475,6 +475,13 @@ impl LinkSocksServer {
             .insert(token.clone(), assigned_port);
         self.token_options.write().await.insert(token.clone(), opts);
 
+        if self.socks_wait_client {
+            debug!(
+                "Deferring SOCKS listener startup for token {} until reverse client signals readiness",
+                token
+            );
+        }
+
         if !self.socks_wait_client {
             if let Err(err) = self.run_socks_server(token.clone(), assigned_port).await {
                 self.tokens.write().await.remove(&token);
@@ -729,21 +736,43 @@ impl LinkSocksServer {
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
         while let Some(message) = ws_receiver.next().await {
             match message {
-                Ok(WsMessage::Ping(payload)) => {
-                    ws_sender
-                        .send(WsMessage::Pong(payload))
-                        .await
-                        .map_err(|e| format!("Failed to send pong to {}: {}", addr, e))?;
-                }
-                Ok(WsMessage::Pong(_)) => {
-                    // Ignore pong frames
-                }
-                Ok(WsMessage::Close(frame)) => {
-                    let _ = ws_sender.send(WsMessage::Close(frame)).await;
-                    break;
-                }
                 Ok(msg) => {
-                    debug!("Received unsupported message from {}: {:?}", addr, msg);
+                    let frame_label = if msg.is_text() {
+                        "text"
+                    } else if msg.is_binary() {
+                        "binary"
+                    } else if msg.is_ping() {
+                        "ping"
+                    } else if msg.is_pong() {
+                        "pong"
+                    } else if msg.is_close() {
+                        "close"
+                    } else {
+                        "other"
+                    };
+                    debug!(
+                        "WebSocket frame from {} classified as {}",
+                        addr, frame_label
+                    );
+
+                    match msg {
+                        WsMessage::Ping(payload) => {
+                            ws_sender
+                                .send(WsMessage::Pong(payload))
+                                .await
+                                .map_err(|e| format!("Failed to send pong to {}: {}", addr, e))?;
+                        }
+                        WsMessage::Pong(_) => {
+                            // Ignore pong frames
+                        }
+                        WsMessage::Close(frame) => {
+                            let _ = ws_sender.send(WsMessage::Close(frame)).await;
+                            break;
+                        }
+                        other => {
+                            debug!("Received unsupported message from {}: {:?}", addr, other);
+                        }
+                    }
                 }
                 Err(e) => {
                     return Err(format!("WebSocket receive error from {}: {}", addr, e));
@@ -936,7 +965,8 @@ impl LinkSocksServer {
                 .as_ref()
                 .map(|task| task.is_running())
                 .unwrap_or(false)
-        }; if res {
+        };
+        if res {
             return true;
         }
 

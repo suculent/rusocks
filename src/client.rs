@@ -1,6 +1,6 @@
 //! Client implementation for rusocks
 
-use crate::message::ConnectorMessage;
+use crate::message::{AuthMessage, ConnectorMessage};
 use log::error;
 use serde_json;
 use std::collections::HashMap;
@@ -285,16 +285,29 @@ impl LinkSocksClient {
         let user_agent = self.options.user_agent.as_deref();
         let (mut handler, sender) =
             crate::conn::connect_to_websocket(&self.options.ws_url, user_agent).await?;
-
         // Store the sender
         let mut ws_sender = self.ws_sender.lock().await;
         *ws_sender = Some(sender);
+        let auth_sender = ws_sender.as_ref().cloned();
+        drop(ws_sender);
 
         // Start the handler
         handler
             .start()
             .await
             .map_err(|e| format!("Failed to start WebSocket handler: {}", e))?;
+
+        if let Some(sender) = auth_sender {
+            let auth_message = AuthMessage::new(self.token.clone(), self.options.reverse);
+            let payload = serde_json::to_string(&auth_message)
+                .map_err(|e| format!("Failed to serialize auth message: {}", e))?;
+            sender
+                .send(WsMessage::Text(payload))
+                .await
+                .map_err(|e| format!("Failed to send auth message: {}", e))?;
+        } else {
+            return Err("WebSocket sender not initialized".to_string());
+        }
 
         // Notify that the client is ready
         self.ready.notify_one();
