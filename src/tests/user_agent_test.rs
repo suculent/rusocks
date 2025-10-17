@@ -3,7 +3,6 @@
 #[cfg(test)]
 mod tests {
     use crate::client::ClientOption;
-    use std::time::Duration;
 
     #[test]
     fn test_client_option_user_agent() {

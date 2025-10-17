@@ -1,16 +1,17 @@
-//! Server implementation for rusocks
-
 use crate::portpool::PortPool;
 use crate::socket::AsyncSocketManager;
 use log::{debug, info, warn};
 use rand::Rng;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::select;
 use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify, RwLock};
+use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
@@ -22,6 +23,57 @@ pub const DEFAULT_CHANNEL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default connect timeout
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+struct SocksTask {
+    stop: Arc<Notify>,
+    is_running: Arc<AtomicBool>,
+    handle: JoinHandle<()>,
+}
+
+impl SocksTask {
+    fn is_running(&self) -> bool {
+        self.is_running.load(Ordering::SeqCst)
+    }
+
+    async fn stop(self) {
+        self.stop.notify_waiters();
+        let _ = self.handle.await;
+    }
+}
+
+struct ListenerTask {
+    stop: Arc<Notify>,
+    is_running: Arc<AtomicBool>,
+    handle: JoinHandle<()>,
+}
+
+impl ListenerTask {
+    fn is_running(&self) -> bool {
+        self.is_running.load(Ordering::SeqCst)
+    }
+
+    async fn stop(self) {
+        self.stop.notify_waiters();
+        let _ = self.handle.await;
+    }
+}
+
+/// Snapshot of high-level server status metrics.
+#[derive(Clone)]
+pub struct StatusSnapshot {
+    pub client_count: usize,
+    pub forward_token_count: usize,
+    pub reverse_token_count: usize,
+    pub connector_token_count: usize,
+}
+
+/// Snapshot of a token entry used for API responses.
+#[derive(Clone)]
+pub struct TokenSnapshot {
+    pub token: String,
+    pub port: Option<u16>,
+    pub client_count: usize,
+}
 
 /// Server options for LinkSocksServer
 #[derive(Clone)]
@@ -297,7 +349,7 @@ pub struct LinkSocksServer {
     conn_cache: Arc<AsyncMutex<ConnectorCache>>,
 
     /// Active SOCKS servers
-    socks_tasks: Arc<RwLock<HashMap<u16, Arc<Notify>>>>,
+    socks_tasks: Arc<RwLock<HashMap<u16, SocksTask>>>,
 
     /// Waiting sockets
     waiting_sockets: Arc<RwLock<HashMap<u16, WaitingSocket>>>,
@@ -310,6 +362,9 @@ pub struct LinkSocksServer {
 
     /// Shutdown notification
     shutdown: Arc<Notify>,
+
+    /// WebSocket listener task
+    ws_task: Arc<AsyncMutex<Option<ListenerTask>>>,
 }
 
 impl LinkSocksServer {
@@ -341,6 +396,7 @@ impl LinkSocksServer {
             socket_manager: Arc::new(AsyncSocketManager::new(&options.socks_host)),
             api_key: options.api_key.clone(),
             shutdown: Arc::new(Notify::new()),
+            ws_task: Arc::new(AsyncMutex::new(None)),
         }
     }
 
@@ -354,17 +410,14 @@ impl LinkSocksServer {
 
     /// Check if a token exists
     async fn token_exists(&self, token: &str) -> bool {
-        // Check if token exists as a forward token
         if self.forward_tokens.read().await.contains(token) {
             return true;
         }
 
-        // Check if token exists as a reverse token
         if self.tokens.read().await.contains_key(token) {
             return true;
         }
 
-        // Check if token exists as a connector token
         if self.connector_tokens.read().await.contains_key(token) {
             return true;
         }
@@ -377,20 +430,17 @@ impl LinkSocksServer {
         &self,
         opts: ReverseTokenOptions,
     ) -> Result<ReverseTokenResult, String> {
-        // If token is provided, check if it already exists
         if let Some(ref token) = opts.token {
             if self.token_exists(token).await {
                 return Err("Token already exists".to_string());
             }
         }
 
-        // Generate random token if not provided
         let token = match opts.token {
             Some(ref t) => t.clone(),
             None => Self::generate_random_token(16),
         };
 
-        // Generate SHA256 version of the token
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
         let sha256_token = hex::encode(hasher.finalize());
@@ -399,7 +449,6 @@ impl LinkSocksServer {
             .await
             .insert(sha256_token.clone(), token.clone());
 
-        // For autonomy tokens, don't allocate a port
         if opts.allow_manage_connector {
             self.tokens.write().await.insert(token.clone(), 0);
             self.token_options.write().await.insert(token.clone(), opts);
@@ -407,7 +456,6 @@ impl LinkSocksServer {
             return Ok(ReverseTokenResult { token, port: None });
         }
 
-        // Check if token already exists
         if let Some(&port) = self.tokens.read().await.get(&token) {
             return Ok(ReverseTokenResult {
                 token,
@@ -415,34 +463,24 @@ impl LinkSocksServer {
             });
         }
 
-        // Get port from pool
         let assigned_port = self.port_pool.get(opts.port);
         if assigned_port == 0 {
             return Err(format!("Cannot allocate port: {:?}", opts.port));
         }
 
-        // Store token information
         self.tokens
             .write()
             .await
             .insert(token.clone(), assigned_port);
         self.token_options.write().await.insert(token.clone(), opts);
 
-        // Start SOCKS server immediately if we're not waiting for clients
         if !self.socks_wait_client {
-            let notify = Arc::new(Notify::new());
-            self.socks_tasks
-                .write()
-                .await
-                .insert(assigned_port, notify.clone());
-
-            let server = self.clone();
-            let token_clone = token.clone();
-            tokio::spawn(async move {
-                if let Err(e) = server.run_socks_server(token_clone, assigned_port).await {
-                    warn!("SOCKS server error: {}", e);
-                }
-            });
+            if let Err(err) = self.run_socks_server(token.clone(), assigned_port).await {
+                self.tokens.write().await.remove(&token);
+                self.token_options.write().await.remove(&token);
+                self.port_pool.put(assigned_port);
+                return Err(err);
+            }
         }
 
         info!("New reverse proxy token added, port: {}", assigned_port);
@@ -456,20 +494,17 @@ impl LinkSocksServer {
 
     /// Add a forward token
     pub async fn add_forward_token(&self, token: Option<String>) -> Result<String, String> {
-        // Check if token already exists
         if let Some(ref t) = token {
             if self.token_exists(t).await {
                 return Err("Token already exists".to_string());
             }
         }
 
-        // Generate random token if not provided
         let token = match token {
             Some(t) => t,
             None => Self::generate_random_token(16),
         };
 
-        // Generate SHA256 version of the token
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
         let sha256_token = hex::encode(hasher.finalize());
@@ -478,12 +513,12 @@ impl LinkSocksServer {
             .await
             .insert(sha256_token.clone(), token.clone());
 
-        // Store token
         self.forward_tokens.write().await.insert(token.clone());
 
         info!("New forward proxy token added");
         debug!("SHA256 for the token: {}", sha256_token.clone());
 
+        self.ready.notify_waiters();
         Ok(token)
     }
 
@@ -493,25 +528,21 @@ impl LinkSocksServer {
         connector_token: Option<String>,
         reverse_token: &str,
     ) -> Result<String, String> {
-        // Check if connector token already exists
         if let Some(ref token) = connector_token {
             if self.token_exists(token).await {
                 return Err("Connector token already exists".to_string());
             }
         }
 
-        // Generate random token if not provided
         let connector_token = match connector_token {
             Some(t) => t,
             None => Self::generate_random_token(16),
         };
 
-        // Verify reverse token exists
         if !self.tokens.read().await.contains_key(reverse_token) {
             return Err("Reverse token does not exist".to_string());
         }
 
-        // Generate SHA256 version of the token
         let mut hasher = Sha256::new();
         hasher.update(connector_token.as_bytes());
         let sha256_token = hex::encode(hasher.finalize());
@@ -520,7 +551,6 @@ impl LinkSocksServer {
             .await
             .insert(sha256_token.clone(), connector_token.clone());
 
-        // Store connector token mapping
         self.connector_tokens
             .write()
             .await
@@ -528,36 +558,259 @@ impl LinkSocksServer {
 
         info!("New connector token added");
 
+        self.ready.notify_waiters();
         Ok(connector_token)
     }
 
     /// Remove a token
-    pub async fn remove_token(&self, _token: &str) -> bool {
-        // TODO: Implement token removal
-        true
+    pub async fn remove_token(&self, token: &str) -> bool {
+        let mut removed = false;
+        let mut reverse_port: Option<u16> = None;
+
+        {
+            let mut tokens_guard = self.tokens.write().await;
+            if let Some(port) = tokens_guard.remove(token) {
+                reverse_port = Some(port);
+                removed = true;
+            }
+        }
+
+        if let Some(port) = reverse_port {
+            self.token_options.write().await.remove(token);
+            self.token_clients.write().await.remove(token);
+            self.token_indexes.write().await.remove(token);
+            self.port_pool.put(port);
+            self.stop_socks_task(port).await;
+        }
+
+        if self.forward_tokens.write().await.remove(token) {
+            removed = true;
+        }
+
+        {
+            let mut internal_tokens = self.internal_tokens.write().await;
+            internal_tokens.retain(|_, tokens| {
+                tokens.retain(|t| t != token);
+                !tokens.is_empty()
+            });
+        }
+
+        let mut connector_removed = HashSet::new();
+        {
+            let mut connector_guard = self.connector_tokens.write().await;
+            connector_guard.retain(|connector, reverse| {
+                if reverse == token || connector == token {
+                    connector_removed.insert(connector.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        if !connector_removed.is_empty() {
+            removed = true;
+        }
+
+        {
+            let mut sha_guard = self.sha256_token_map.write().await;
+            sha_guard.retain(|_, value| value != token && !connector_removed.contains(value));
+        }
+
+        removed
     }
 
-    /// Start the server
+    /// Remove a connector token
+    pub async fn remove_connector_token(&self, token: &str) -> bool {
+        let removed = self.connector_tokens.write().await.remove(token).is_some();
+        if removed {
+            self.sha256_token_map
+                .write()
+                .await
+                .retain(|_, value| value != token);
+        }
+        removed
+    }
+
+    /// Start the server (idempotent)
     pub async fn serve(&self) -> Result<(), String> {
-        // TODO: Implement server
+        {
+            let task_guard = self.ws_task.lock().await;
+            if let Some(task) = task_guard.as_ref() {
+                if task.is_running() {
+                    return Ok(());
+                }
+            }
+        }
+
+        let listener = TcpListener::bind(self.ws_addr).await.map_err(|e| {
+            format!(
+                "Failed to bind WebSocket listener on {}: {}",
+                self.ws_addr, e
+            )
+        })?;
+
+        let stop = Arc::new(Notify::new());
+        let is_running = Arc::new(AtomicBool::new(true));
+        let stop_clone = stop.clone();
+        let running_clone = is_running.clone();
+        let address = self.ws_addr;
+
+        let handle = tokio::spawn(async move {
+            let listener = listener;
+            loop {
+                select! {
+                    _ = stop_clone.notified() => {
+                        break;
+                    }
+                    accept_res = listener.accept() => {
+                        match accept_res {
+                            Ok((stream, addr)) => {
+                                debug!("Accepted WebSocket connection from {}", addr);
+                                drop(stream);
+                            }
+                            Err(err) => {
+                                warn!("WebSocket accept error on {}: {}", address, err);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            running_clone.store(false, Ordering::SeqCst);
+        });
+
+        let mut task_guard = self.ws_task.lock().await;
+        let previous = task_guard.take();
+        *task_guard = Some(ListenerTask {
+            stop,
+            is_running,
+            handle,
+        });
+        drop(task_guard);
+
+        if let Some(task) = previous {
+            task.stop().await;
+        }
+
+        info!("WebSocket server listening on {}", self.ws_addr);
+        self.ready.notify_waiters();
         Ok(())
     }
 
     /// Wait for the server to be ready
     pub async fn wait_ready(&self) -> Result<(), String> {
-        // TODO: Implement wait_ready
+        self.serve().await?;
+        if self.is_ready().await {
+            return Ok(());
+        }
+        self.ready.notified().await;
         Ok(())
     }
 
     /// Run a SOCKS server
-    async fn run_socks_server(&self, _token: String, _port: u16) -> Result<(), String> {
-        // TODO: Implement SOCKS server
+    async fn run_socks_server(&self, token: String, port: u16) -> Result<(), String> {
+        {
+            let mut tasks_guard = self.socks_tasks.write().await;
+            let previous = match tasks_guard.entry(port) {
+                Entry::Occupied(entry) => {
+                    if entry.get().is_running() {
+                        return Ok(());
+                    }
+                    Some(entry.remove())
+                }
+                Entry::Vacant(_) => None,
+            };
+            drop(tasks_guard);
+
+            if let Some(task) = previous {
+                task.stop().await;
+            }
+        }
+
+        let addr = self
+            .socket_manager
+            .get_socket_addr(port)
+            .await
+            .map_err(|e| format!("Failed to allocate socket address for port {}: {}", port, e))?;
+
+        let listener = match TcpListener::bind(addr).await {
+            Ok(listener) => listener,
+            Err(err) => {
+                self.socket_manager.release_socket(port).await;
+                return Err(format!(
+                    "Failed to bind SOCKS listener on {}: {}",
+                    addr, err
+                ));
+            }
+        };
+
+        let stop = Arc::new(Notify::new());
+        let is_running = Arc::new(AtomicBool::new(true));
+        let stop_clone = stop.clone();
+        let running_clone = is_running.clone();
+        let server_clone = self.clone();
+        let token_label = token.clone();
+
+        let handle = tokio::spawn(async move {
+            let listener = listener;
+            loop {
+                select! {
+                    _ = stop_clone.notified() => {
+                        break;
+                    }
+                    accept_res = listener.accept() => {
+                        match accept_res {
+                            Ok((stream, addr)) => {
+                                debug!("Accepted reverse SOCKS connection for token {} from {}", token_label, addr);
+                                drop(stream);
+                            }
+                            Err(err) => {
+                                warn!("SOCKS accept error on port {}: {}", port, err);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            running_clone.store(false, Ordering::SeqCst);
+            server_clone.socket_manager.release_socket(port).await;
+        });
+
+        self.socks_tasks.write().await.insert(
+            port,
+            SocksTask {
+                stop,
+                is_running,
+                handle,
+            },
+        );
+
+        info!(
+            "Reverse SOCKS listener started on {} for token {}",
+            addr, token
+        );
+        self.ready.notify_waiters();
         Ok(())
     }
 
     /// Close the server
     pub async fn close(&self) {
-        // TODO: Implement close
+        self.shutdown.notify_waiters();
+
+        let ws_task = { self.ws_task.lock().await.take() };
+        if let Some(task) = ws_task {
+            task.stop().await;
+        }
+
+        let tasks: Vec<SocksTask> = {
+            let mut guard = self.socks_tasks.write().await;
+            guard.drain().map(|(_, task)| task).collect()
+        };
+        for task in tasks {
+            task.stop().await;
+        }
+
+        self.socket_manager.close().await;
     }
 
     /// Get the number of connected clients
@@ -572,17 +825,82 @@ impl LinkSocksServer {
 
     /// Get the number of clients connected for a given token
     pub async fn get_token_client_count(&self, token: &str) -> usize {
-        // Check reverse proxy clients
         if let Some(clients) = self.token_clients.read().await.get(token) {
             return clients.len();
         }
 
-        // Check forward proxy clients
         if self.forward_tokens.read().await.contains(token) {
             return self.clients.read().await.len();
         }
 
         0
+    }
+
+    /// Produce a snapshot of current status metrics.
+    pub async fn status_snapshot(&self) -> StatusSnapshot {
+        StatusSnapshot {
+            client_count: self.clients.read().await.len(),
+            forward_token_count: self.forward_tokens.read().await.len(),
+            reverse_token_count: self.tokens.read().await.len(),
+            connector_token_count: self.connector_tokens.read().await.len(),
+        }
+    }
+
+    /// Produce token snapshots suitable for API responses.
+    pub async fn token_snapshot(&self) -> Vec<TokenSnapshot> {
+        let reverse_entries: Vec<(String, u16)> = self
+            .tokens
+            .read()
+            .await
+            .iter()
+            .map(|(token, port)| (token.clone(), *port))
+            .collect();
+
+        let forward_entries: Vec<String> =
+            self.forward_tokens.read().await.iter().cloned().collect();
+
+        let mut results = Vec::with_capacity(reverse_entries.len() + forward_entries.len());
+        for (token, port) in reverse_entries {
+            let client_count = self.get_token_client_count(&token).await;
+            results.push(TokenSnapshot {
+                token,
+                port: Some(port),
+                client_count,
+            });
+        }
+
+        for token in forward_entries {
+            let client_count = self.get_token_client_count(&token).await;
+            results.push(TokenSnapshot {
+                token,
+                port: None,
+                client_count,
+            });
+        }
+
+        results
+    }
+
+    async fn is_ready(&self) -> bool {
+        if {
+            let guard = self.ws_task.lock().await;
+            guard
+                .as_ref()
+                .map(|task| task.is_running())
+                .unwrap_or(false)
+        } {
+            return true;
+        }
+
+        let guard = self.socks_tasks.read().await;
+        guard.values().any(|task| task.is_running())
+    }
+
+    async fn stop_socks_task(&self, port: u16) {
+        let task = { self.socks_tasks.write().await.remove(&port) };
+        if let Some(task) = task {
+            task.stop().await;
+        }
     }
 }
 
@@ -610,6 +928,7 @@ impl Clone for LinkSocksServer {
             socket_manager: self.socket_manager.clone(),
             api_key: self.api_key.clone(),
             shutdown: self.shutdown.clone(),
+            ws_task: self.ws_task.clone(),
         }
     }
 }

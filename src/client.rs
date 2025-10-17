@@ -1,6 +1,8 @@
 //! Client implementation for rusocks
 
+use crate::message::ConnectorMessage;
 use log::error;
+use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -311,14 +313,22 @@ impl LinkSocksClient {
     }
 
     /// Add a connector token
-    pub async fn add_connector(&self, _connector_token: &str) -> Result<(), String> {
-        // Check if client is connected
+    pub async fn add_connector(&self, connector_token: &str) -> Result<(), String> {
         let ws_sender = self.ws_sender.lock().await;
-        if ws_sender.is_none() {
-            return Err("Client not connected".to_string());
-        }
+        let sender = match ws_sender.as_ref() {
+            Some(sender) => sender.clone(),
+            None => return Err("Client not connected".to_string()),
+        };
+        drop(ws_sender);
 
-        // TODO: Implement connector token addition
+        let message = ConnectorMessage::add(connector_token.to_string());
+        let payload = serde_json::to_string(&message)
+            .map_err(|e| format!("Failed to serialize connector message: {}", e))?;
+
+        sender
+            .send(WsMessage::Text(payload))
+            .await
+            .map_err(|e| format!("Failed to send connector message: {}", e))?;
         Ok(())
     }
 
