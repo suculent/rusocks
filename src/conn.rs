@@ -9,6 +9,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::{
     tungstenite::{client::IntoClientRequest, Error as WsError, Message as WsMessage},
+    MaybeTlsStream,
     WebSocketStream,
 };
 use url::Url;
@@ -111,7 +112,7 @@ impl WSConn {
 /// WebSocket message handler
 pub struct WSHandler {
     /// WebSocket stream
-    stream: Option<WebSocketStream<TcpStream>>,
+    stream: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
 
     /// Message sender
     sender: mpsc::Sender<WsMessage>,
@@ -125,7 +126,9 @@ pub struct WSHandler {
 
 impl WSHandler {
     /// Create a new WebSocket handler
-    pub fn new(stream: WebSocketStream<TcpStream>) -> (Self, mpsc::Sender<WsMessage>) {
+    pub fn new(
+        stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    ) -> (Self, mpsc::Sender<WsMessage>) {
         let (sender, receiver) = mpsc::channel(100);
 
         (
@@ -248,24 +251,13 @@ pub async fn connect_to_websocket(
     };
 
     // Connect with the request
-    let (_ws_stream, _) = match tokio_tungstenite::connect_async(request).await {
+    let (ws_stream, _) = match tokio_tungstenite::connect_async(request).await {
         Ok(conn) => conn,
         Err(e) => return Err(format!("Failed to connect to WebSocket server: {}", e)),
     };
 
-    // Create handler
-    // Convert the MaybeTlsStream to TcpStream for aarch64 compatibility
-    // This is a workaround and might not work in all cases
-    let std_stream = std::net::TcpStream::connect(url.host_str().unwrap_or("localhost")).unwrap();
-    let tcp_stream = TcpStream::from_std(std_stream).unwrap();
-    let ws_stream_tcp = WebSocketStream::from_raw_socket(
-        tcp_stream,
-        tokio_tungstenite::tungstenite::protocol::Role::Client,
-        None,
-    )
-    .await;
-
-    let (handler, sender) = WSHandler::new(ws_stream_tcp);
+    // Create handler using the established WebSocket stream
+    let (handler, sender) = WSHandler::new(ws_stream);
 
     Ok((handler, sender))
 }

@@ -13,6 +13,7 @@ import subprocess
 import platform
 import tempfile
 import importlib.machinery
+from dataclasses import dataclass
 from pathlib import Path
 from setuptools import setup, find_packages
 import setuptools
@@ -25,6 +26,15 @@ from typing import Optional
 
 # Get the current directory
 here = Path(__file__).parent.absolute()
+
+@dataclass
+class RustSourceBundle:
+    rust_src_dir: Path
+    cargo_src_dir: Path
+    created_rust_src: bool
+    created_cargo_src: bool
+    manifest_paths: list[Path]
+
 
 # Global variables
 _temp_rust_dir = None
@@ -67,45 +77,48 @@ def ensure_placeholder_rusockslib():
     except Exception as e:
         print(f"Warning: failed to create placeholder rusockslib: {e}")
 
-def prepare_rust_sources():
-    """Prepare Rust source files by copying them to a temporary directory."""
+def prepare_rust_sources() -> RustSourceBundle:
+    """Prepare Rust source files for Cargo builds and return bundle metadata."""
     rust_src_dir = here / "rust_src"
-    
-    # If rust_src already exists (e.g., from source distribution), use it
-    if rust_src_dir.exists():
-        print(f"Using existing Rust sources in {rust_src_dir}")
-        return rust_src_dir
-    
-    print("Preparing Rust source files...")
-    
-    # Try to find project root (go up from _bindings/python/)
+    cargo_src_dir = here / "src"
+
+    rust_src_preexisted = rust_src_dir.exists()
+    cargo_src_preexisted = cargo_src_dir.exists()
+
+    if cargo_src_preexisted:
+        print(f"Refreshing existing Cargo src directory at {cargo_src_dir}")
+        shutil.rmtree(cargo_src_dir)
+
     project_root = here.parent.parent
     if not (project_root / "Cargo.toml").exists():
         raise FileNotFoundError("Cannot find project root with Cargo.toml file")
     
-    # Create rust_src directory
-    if rust_src_dir.exists():
-        shutil.rmtree(rust_src_dir)
-    rust_src_dir.mkdir()
+    if rust_src_preexisted:
+        print(f"Refreshing existing Rust sources in {rust_src_dir}")
+    else:
+        print("Preparing Rust source files...")
     
-    # Copy Cargo.toml to parent directory (here)
+    shutil.copytree(project_root / "src", rust_src_dir, dirs_exist_ok=True)
+    
+    manifest_paths: list[Path] = []
     for file in ["Cargo.toml", "Cargo.lock"]:
         src = project_root / file
         if src.exists():
-            shutil.copy2(src, here / file)
+            dst = here / file
+            shutil.copy2(src, dst)
+            manifest_paths.append(dst)
             print(f"Copied {file} to {here}")
     
-    # Copy rusocks Rust files to rust_src directory
-    rusocks_src = project_root / "src"
-    if rusocks_src.exists():
-        for rust_file in rusocks_src.glob("*.rs"):
-            shutil.copy2(rust_file, rust_src_dir / rust_file.name)
-            print(f"Copied {rust_file.name} to rust_src/")
-    else:
-        raise FileNotFoundError("Cannot find rusocks source directory")
+    # Ensure Cargo sees a `src` directory adjacent to Cargo.toml
+    shutil.copytree(rust_src_dir, cargo_src_dir, dirs_exist_ok=True)
     
-    print(f"Rust sources prepared in {rust_src_dir}")
-    return rust_src_dir
+    return RustSourceBundle(
+        rust_src_dir=rust_src_dir,
+        cargo_src_dir=cargo_src_dir,
+        created_rust_src=not rust_src_preexisted,
+        created_cargo_src=not cargo_src_preexisted,
+        manifest_paths=manifest_paths,
+    )
 
 def _expected_binary_names() -> list[str]:
     """Return candidate filenames for the extension for the current interpreter/platform."""
@@ -265,28 +278,68 @@ def cleanup_temp_rust():
             print(f"Warning: Failed to clean up temporary Rust installation: {e}")
             _temp_rust_dir = None
 
-def install_pyo3_and_tools():
-    """Install PyO3 and related Rust tools."""
+def install_pyo3_and_tools() -> str:
+    """Ensure maturin is available and return the interpreter used to invoke it."""
     print("Installing PyO3 and Rust tools...")
     
     # Ensure Rust is available
     if not check_rust_installation():
         raise RuntimeError("Rust is not available after installation attempt")
     
-    # Install maturin for building Python bindings
+    pip_python = os.environ.get("PYO3_MATURIN_PYTHON", sys.executable)
+    
+    # Prefer an existing CLI on PATH
+    if shutil.which("maturin"):
+        print("maturin CLI already available on PATH")
+        return pip_python
+    
+    # Check whether maturin is already importable
     try:
-        run_command(["pip", "install", "maturin"])
+        run_command([pip_python, "-m", "maturin", "--version"])
+        print("maturin Python module already available")
+        return pip_python
+    except subprocess.CalledProcessError:
+        pass
+    
+    pip_cmd = [pip_python, "-m", "pip", "install", "maturin>=1.5"]
+    try:
+        run_command(pip_cmd)
         print("maturin installed successfully")
+        return pip_python
     except subprocess.CalledProcessError as e:
+        stderr = e.stderr or ""
+        if "No module named pip" in stderr:
+            print("pip not available in build environment, bootstrapping with ensurepip...")
+            run_command([pip_python, "-m", "ensurepip", "--upgrade"])
+            try:
+                run_command([pip_python, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
+            except subprocess.CalledProcessError as pip_err:
+                secondary_stderr = pip_err.stderr or ""
+                if "No module named pip" in secondary_stderr:
+                    print("ensurepip did not expose pip, downloading get-pip bootstrap script...")
+                    bootstrap_dir = Path(tempfile.mkdtemp(prefix="get_pip_bootstrap_"))
+                    try:
+                        bootstrap_script = bootstrap_dir / "get-pip.py"
+                        download_file("https://bootstrap.pypa.io/get-pip.py", bootstrap_script)
+                        run_command([pip_python, str(bootstrap_script)])
+                    finally:
+                        shutil.rmtree(bootstrap_dir, ignore_errors=True)
+                else:
+                    raise
+            run_command(pip_cmd)
+            print("maturin installed successfully after bootstrapping pip")
+            return pip_python
         print(f"Failed to install maturin: {e}")
         raise
 
-def build_python_bindings():
+def build_python_bindings(maturin_python: str):
     """Build Python bindings using maturin."""
     print("Building Python bindings with maturin...")
     
+    rust_sources: Optional[RustSourceBundle] = None
+    
     # Prepare Rust sources first
-    rust_src_dir = prepare_rust_sources()
+    rust_sources = prepare_rust_sources()
     
     try:
         # Clean existing bindings
@@ -301,7 +354,7 @@ def build_python_bindings():
         
         # Run maturin build
         cmd = [
-            "maturin", "build",
+            maturin_python, "-m", "maturin", "build",
             "--release",
             "--strip",
             "--out", str(rusocks_lib_dir),
@@ -314,16 +367,21 @@ def build_python_bindings():
         prune_foreign_binaries(rusocks_lib_dir)
         
     finally:
-        # Clean up temporary rust_src directory and Cargo.toml/Cargo.lock
-        if rust_src_dir.exists():
-            shutil.rmtree(rust_src_dir)
-            print(f"Cleaned up {rust_src_dir}")
-        
-        for file in ["Cargo.toml", "Cargo.lock"]:
-            temp_rust_file = here / file
-            if temp_rust_file.exists():
-                temp_rust_file.unlink()
-                print(f"Cleaned up {temp_rust_file}")
+        # Clean up temporary rust_src/src directories and Cargo manifests when we created them
+        if rust_sources:
+            if rust_sources.created_cargo_src and rust_sources.cargo_src_dir.exists():
+                shutil.rmtree(rust_sources.cargo_src_dir)
+                print(f"Cleaned up {rust_sources.cargo_src_dir}")
+            if rust_sources.created_rust_src and rust_sources.rust_src_dir.exists():
+                shutil.rmtree(rust_sources.rust_src_dir)
+                print(f"Cleaned up {rust_sources.rust_src_dir}")
+            for manifest in rust_sources.manifest_paths:
+                try:
+                    if manifest.exists():
+                        manifest.unlink()
+                        print(f"Cleaned up {manifest}")
+                except Exception as cleanup_err:
+                    print(f"Warning: failed to remove {manifest}: {cleanup_err}")
 
 def ensure_python_bindings():
     """Ensure Python bindings are available, build if necessary."""
@@ -364,10 +422,10 @@ def ensure_python_bindings():
         
         try:
             # Install PyO3 and tools
-            install_pyo3_and_tools()
+            maturin_python = install_pyo3_and_tools()
             
             # Build bindings
-            build_python_bindings()
+            build_python_bindings(maturin_python)
             
         except Exception as e:
             print(f"Failed to build Python bindings: {e}")
@@ -431,10 +489,10 @@ class SdistWithRustSources(_sdist):
     """
 
     def run(self):
-        rust_src_dir = None
+        rust_sources: Optional[RustSourceBundle] = None
         created_files = []
         try:
-            rust_src_dir = prepare_rust_sources()
+            rust_sources = prepare_rust_sources()
             # Track Cargo.toml and Cargo.lock created in this directory for cleanup
             for fname in ["Cargo.toml", "Cargo.lock"]:
                 fpath = here / fname
@@ -444,11 +502,22 @@ class SdistWithRustSources(_sdist):
         finally:
             # Clean up generated Rust sources and module files after sdist
             try:
-                if rust_src_dir and Path(rust_src_dir).exists():
-                    shutil.rmtree(rust_src_dir)
-                    print(f"Cleaned up {rust_src_dir}")
+                if rust_sources:
+                    if rust_sources.created_cargo_src and rust_sources.cargo_src_dir.exists():
+                        shutil.rmtree(rust_sources.cargo_src_dir)
+                        print(f"Cleaned up {rust_sources.cargo_src_dir}")
+                    if rust_sources.created_rust_src and rust_sources.rust_src_dir.exists():
+                        shutil.rmtree(rust_sources.rust_src_dir)
+                        print(f"Cleaned up {rust_sources.rust_src_dir}")
             except Exception as cleanup_err:
-                print(f"Warning: failed to remove {rust_src_dir}: {cleanup_err}")
+                print(f"Warning: failed to remove generated Rust sources: {cleanup_err}")
+            for manifest in rust_sources.manifest_paths:
+                try:
+                    if manifest.exists():
+                        manifest.unlink()
+                        print(f"Cleaned up {manifest}")
+                except Exception as cleanup_err:
+                    print(f"Warning: failed to remove {manifest}: {cleanup_err}")
             for fpath in created_files:
                 try:
                     if fpath.exists():
