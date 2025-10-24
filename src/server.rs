@@ -775,69 +775,41 @@ impl LinkSocksServer {
                         }
                         WsMessage::Binary(payload) => {
                             if !authenticated {
-                                let version = payload.first().copied();
-                                let message_type = payload.get(1).copied();
-                                let token_len = payload.get(2).copied();
-                                let preview: Vec<u8> = payload.iter().take(4).copied().collect();
-                                debug!(
-                                    "Pre-auth binary frame from {}: len={}, version={:?}, type={:?}, token_len_byte={:?}",
-                                    addr,
-                                    payload.len(),
-                                    version,
-                                    message_type,
-                                    token_len
-                                );
-                                debug!(
-                                    "Binary payload first four bytes for {} => {:02X?}",
-                                    addr, preview
-                                );
                                 match Self::parse_binary_auth(&payload) {
-                                    Ok(auth_msg) => {
-                                        match self
-                                            .process_auth_message(&mut ws_sender, addr, auth_msg)
-                                            .await
-                                        {
-                                            Ok(()) => {
-                                                authenticated = true;
-                                                continue;
-                                            }
-                                            Err(err) => {
-                                                debug!(
-                                                    "Binary authentication flow terminated for {}: {}",
-                                                    addr, err
-                                                );
-                                                break;
-                                            }
+                                    Ok(auth_msg) => match self
+                                        .process_auth_message(&mut ws_sender, addr, auth_msg)
+                                        .await
+                                    {
+                                        Ok(()) => {
+                                            authenticated = true;
+                                            continue;
                                         }
-                                    }
+                                        Err(err) => {
+                                            debug!(
+                                                "Binary authentication flow terminated for {}: {}",
+                                                addr, err
+                                            );
+                                            break;
+                                        }
+                                    },
                                     Err(err) => {
-                                        debug!(
-                                            "Failed to parse binary auth message from {}: {}",
-                                            addr, err
-                                        );
-                                        let response = AuthResponseMessage::failure(err.clone());
-                                        let payload =
-                                            serde_json::to_string(&response).map_err(|e| {
-                                                format!("Failed to serialize auth response: {}", e)
-                                            })?;
-                                        ws_sender.send(WsMessage::Text(payload)).await.map_err(
-                                            |e| {
-                                                format!(
-                                                    "Failed to send auth response to {}: {}",
-                                                    addr, e
-                                                )
-                                            },
-                                        )?;
+                                        let error_msg = err;
                                         warn!(
                                             "Binary authentication from {} rejected: {}",
-                                            addr, err
+                                            addr, error_msg
                                         );
+                                        Self::send_auth_response(
+                                            &mut ws_sender,
+                                            addr,
+                                            AuthResponseMessage::failure(error_msg.clone()),
+                                        )
+                                        .await?;
                                         break;
                                     }
                                 }
                             } else {
                                 debug!(
-                                    "Binary payload from authenticated client {} ignored for now ({} bytes)",
+                                    "Binary payload from authenticated client {} ignored ({} bytes)",
                                     addr,
                                     payload.len()
                                 );
@@ -1052,10 +1024,7 @@ impl LinkSocksServer {
         frame.push(if response.success { 1 } else { 0 });
 
         if !response.success {
-            let error_message = response
-                .error
-                .as_deref()
-                .unwrap_or("authentication failed");
+            let error_message = response.error.as_deref().unwrap_or("authentication failed");
             let error_bytes = error_message.as_bytes();
             if error_bytes.len() > u8::MAX as usize {
                 return Err("Auth response error message exceeds 255 bytes".to_string());
