@@ -1,7 +1,7 @@
 use crate::message::{AuthMessage, AuthResponseMessage};
 use crate::portpool::PortPool;
 use crate::socket::AsyncSocketManager;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use log::{debug, info, warn};
 use rand::Rng;
 use sha2::{Digest, Sha256};
@@ -14,7 +14,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify, RwLock};
 use tokio::task::JoinHandle;
-use tokio_tungstenite::{accept_async, tungstenite::Message as WsMessage};
+use tokio_tungstenite::{accept_async, tungstenite::Message as WsMessage, WebSocketStream};
 use uuid::Uuid;
 
 /// Default buffer size for data transfer
@@ -25,6 +25,10 @@ pub const DEFAULT_CHANNEL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default connect timeout
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+const AUTH_PROTOCOL_VERSION: u8 = 0x01;
+const AUTH_MESSAGE_TYPE: u8 = 0x01;
+const AUTH_INSTANCE_LEN: usize = 16;
 
 struct SocksTask {
     stop: Arc<Notify>,
@@ -773,6 +777,7 @@ impl LinkSocksServer {
                                 let version = payload.first().copied();
                                 let message_type = payload.get(1).copied();
                                 let token_len = payload.get(2).copied();
+                                let preview: Vec<u8> = payload.iter().take(4).copied().collect();
                                 debug!(
                                     "Pre-auth binary frame from {}: len={}, version={:?}, type={:?}, token_len_byte={:?}",
                                     addr,
@@ -781,12 +786,53 @@ impl LinkSocksServer {
                                     message_type,
                                     token_len
                                 );
-                                if let Some(first) = payload.first() {
-                                    debug!(
-                                        "Binary payload first four bytes for {} => {:02X?}",
-                                        addr,
-                                        &payload.iter().take(4).collect::<Vec<_>>()
-                                    );
+                                debug!(
+                                    "Binary payload first four bytes for {} => {:02X?}",
+                                    addr, preview
+                                );
+                                match Self::parse_binary_auth(&payload) {
+                                    Ok(auth_msg) => {
+                                        match self
+                                            .process_auth_message(&mut ws_sender, addr, auth_msg)
+                                            .await
+                                        {
+                                            Ok(()) => {
+                                                authenticated = true;
+                                                continue;
+                                            }
+                                            Err(err) => {
+                                                debug!(
+                                                    "Binary authentication flow terminated for {}: {}",
+                                                    addr, err
+                                                );
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Err(err) => {
+                                        debug!(
+                                            "Failed to parse binary auth message from {}: {}",
+                                            addr, err
+                                        );
+                                        let response = AuthResponseMessage::failure(err.clone());
+                                        let payload =
+                                            serde_json::to_string(&response).map_err(|e| {
+                                                format!("Failed to serialize auth response: {}", e)
+                                            })?;
+                                        ws_sender.send(WsMessage::Text(payload)).await.map_err(
+                                            |e| {
+                                                format!(
+                                                    "Failed to send auth response to {}: {}",
+                                                    addr, e
+                                                )
+                                            },
+                                        )?;
+                                        warn!(
+                                            "Binary authentication from {} rejected: {}",
+                                            addr, err
+                                        );
+                                        break;
+                                    }
                                 }
                             } else {
                                 debug!(
@@ -806,184 +852,21 @@ impl LinkSocksServer {
                             if !authenticated {
                                 match serde_json::from_str::<AuthMessage>(&text) {
                                     Ok(auth_msg) => {
-                                        let token = auth_msg.token.clone();
-                                        if token.is_empty() {
-                                            let response = AuthResponseMessage::failure(
-                                                "token is required".to_string(),
-                                            );
-                                            let payload = serde_json::to_string(&response)
-                                                .map_err(|e| {
-                                                    format!(
-                                                        "Failed to serialize auth response: {}",
-                                                        e
-                                                    )
-                                                })?;
-                                            ws_sender
-                                                .send(WsMessage::Text(payload))
-                                                .await
-                                                .map_err(|e| {
-                                                    format!(
-                                                        "Failed to send auth response to {}: {}",
-                                                        addr, e
-                                                    )
-                                                })?;
-                                            warn!(
-                                                "Authentication from {} rejected: empty token",
-                                                addr
-                                            );
-                                            break;
-                                        }
-
-                                        if auth_msg.reverse {
-                                            let port = {
-                                                let guard = self.tokens.read().await;
-                                                guard.get(&token).copied()
-                                            };
-
-                                            match port {
-                                                Some(port) => {
-                                                    if let Err(err) = self
-                                                        .ensure_reverse_socks_running(&token, port)
-                                                        .await
-                                                    {
-                                                        let response = AuthResponseMessage::failure(
-                                                            err.clone(),
-                                                        );
-                                                        let payload =
-                                                            serde_json::to_string(&response)
-                                                                .map_err(|e| {
-                                                                    format!(
-                                                                        "Failed to serialize auth response: {}",
-                                                                        e
-                                                                    )
-                                                                })?;
-                                                        ws_sender
-                                                            .send(WsMessage::Text(payload))
-                                                            .await
-                                                            .map_err(|e| {
-                                                                format!(
-                                                                    "Failed to send auth response to {}: {}",
-                                                                    addr, e
-                                                                )
-                                                            })?;
-                                                        warn!(
-                                                            "Reverse authentication from {} failed: {}",
-                                                            addr, err
-                                                        );
-                                                        break;
-                                                    }
-
-                                                    let response = AuthResponseMessage::success();
-                                                    let payload =
-                                                        serde_json::to_string(&response)
-                                                            .map_err(|e| {
-                                                                format!(
-                                                                    "Failed to serialize auth response: {}",
-                                                                    e
-                                                                )
-                                                            })?;
-                                                    ws_sender
-                                                        .send(WsMessage::Text(payload))
-                                                        .await
-                                                        .map_err(|e| {
-                                                            format!(
-                                                                "Failed to send auth response to {}: {}",
-                                                                addr, e
-                                                            )
-                                                        })?;
-                                                    info!(
-                                                        "Reverse client {} authenticated for token {} on port {}",
-                                                        addr, token, port
-                                                    );
-                                                    authenticated = true;
-                                                    self.ready.notify_waiters();
-                                                    continue;
-                                                }
-                                                None => {
-                                                    let response = AuthResponseMessage::failure(
-                                                        "invalid reverse token".to_string(),
-                                                    );
-                                                    let payload =
-                                                        serde_json::to_string(&response)
-                                                            .map_err(|e| {
-                                                                format!(
-                                                                    "Failed to serialize auth response: {}",
-                                                                    e
-                                                                )
-                                                            })?;
-                                                    ws_sender
-                                                        .send(WsMessage::Text(payload))
-                                                        .await
-                                                        .map_err(|e| {
-                                                            format!(
-                                                                "Failed to send auth response to {}: {}",
-                                                                addr, e
-                                                            )
-                                                        })?;
-                                                    warn!(
-                                                        "Reverse authentication from {} failed: invalid token {}",
-                                                        addr, token
-                                                    );
-                                                    break;
-                                                }
+                                        match self
+                                            .process_auth_message(&mut ws_sender, addr, auth_msg)
+                                            .await
+                                        {
+                                            Ok(()) => {
+                                                authenticated = true;
+                                                continue;
                                             }
-                                        } else {
-                                            let valid = {
-                                                let guard = self.forward_tokens.read().await;
-                                                guard.contains(&token)
-                                            };
-
-                                            if !valid {
-                                                let response = AuthResponseMessage::failure(
-                                                    "invalid forward token".to_string(),
-                                                );
-                                                let payload = serde_json::to_string(&response)
-                                                    .map_err(|e| {
-                                                        format!(
-                                                            "Failed to serialize auth response: {}",
-                                                            e
-                                                        )
-                                                    })?;
-                                                ws_sender
-                                                    .send(WsMessage::Text(payload))
-                                                    .await
-                                                    .map_err(|e| {
-                                                        format!(
-                                                            "Failed to send auth response to {}: {}",
-                                                            addr, e
-                                                        )
-                                                    })?;
-                                                warn!(
-                                                    "Forward authentication from {} failed: invalid token {}",
-                                                    addr, token
+                                            Err(err) => {
+                                                debug!(
+                                                    "Text authentication flow terminated for {}: {}",
+                                                    addr, err
                                                 );
                                                 break;
                                             }
-
-                                            let response = AuthResponseMessage::success();
-                                            let payload = serde_json::to_string(&response)
-                                                .map_err(|e| {
-                                                    format!(
-                                                        "Failed to serialize auth response: {}",
-                                                        e
-                                                    )
-                                                })?;
-                                            ws_sender
-                                                .send(WsMessage::Text(payload))
-                                                .await
-                                                .map_err(|e| {
-                                                    format!(
-                                                        "Failed to send auth response to {}: {}",
-                                                        addr, e
-                                                    )
-                                                })?;
-                                            info!(
-                                                "Forward client {} authenticated for token {}",
-                                                addr, token
-                                            );
-                                            authenticated = true;
-                                            self.ready.notify_waiters();
-                                            continue;
                                         }
                                     }
                                     Err(err) => {
@@ -1013,6 +896,161 @@ impl LinkSocksServer {
 
         debug!("WebSocket connection closed for {}", addr);
         Ok(())
+    }
+
+    fn parse_binary_auth(payload: &[u8]) -> Result<AuthMessage, String> {
+        if payload.len() < 3 {
+            return Err("binary auth payload too short".to_string());
+        }
+
+        let version = payload[0];
+        let message_type = payload[1];
+        let token_len = payload[2] as usize;
+
+        if version != AUTH_PROTOCOL_VERSION {
+            return Err(format!(
+                "unsupported auth protocol version: {:02X}",
+                version
+            ));
+        }
+
+        if message_type != AUTH_MESSAGE_TYPE {
+            return Err(format!(
+                "unsupported auth message type: {:02X}",
+                message_type
+            ));
+        }
+
+        let expected_len = 3 + token_len + 1 + AUTH_INSTANCE_LEN;
+        if payload.len() != expected_len {
+            return Err(format!(
+                "binary auth payload length mismatch: expected {}, got {}",
+                expected_len,
+                payload.len()
+            ));
+        }
+
+        let token_start = 3;
+        let token_end = token_start + token_len;
+        let token_bytes = &payload[token_start..token_end];
+        let token = String::from_utf8(token_bytes.to_vec())
+            .map_err(|_| "token is not valid UTF-8".to_string())?;
+
+        let reverse_flag_index = token_end;
+        let reverse = payload[reverse_flag_index] != 0;
+
+        let instance_start = reverse_flag_index + 1;
+        let instance_end = instance_start + AUTH_INSTANCE_LEN;
+        let instance_bytes = &payload[instance_start..instance_end];
+        let instance = Uuid::from_slice(instance_bytes)
+            .map_err(|e| format!("invalid instance UUID: {}", e))?;
+
+        Ok(AuthMessage {
+            message_type: "auth".to_string(),
+            token,
+            reverse,
+            instance,
+        })
+    }
+
+    async fn process_auth_message(
+        &self,
+        ws_sender: &mut SplitSink<WebSocketStream<TcpStream>, WsMessage>,
+        addr: SocketAddr,
+        auth_msg: AuthMessage,
+    ) -> Result<(), String> {
+        let token = auth_msg.token.clone();
+
+        if token.is_empty() {
+            let error = "token is required".to_string();
+            Self::send_auth_response(ws_sender, addr, AuthResponseMessage::failure(error.clone()))
+                .await?;
+            warn!("Authentication from {} rejected: empty token", addr);
+            return Err(error);
+        }
+
+        if auth_msg.reverse {
+            let port = {
+                let guard = self.tokens.read().await;
+                guard.get(&token).copied()
+            };
+
+            match port {
+                Some(port) => {
+                    if let Err(err) = self.ensure_reverse_socks_running(&token, port).await {
+                        Self::send_auth_response(
+                            ws_sender,
+                            addr,
+                            AuthResponseMessage::failure(err.clone()),
+                        )
+                        .await?;
+                        warn!("Reverse authentication from {} failed: {}", addr, err);
+                        return Err(err);
+                    }
+
+                    Self::send_auth_response(ws_sender, addr, AuthResponseMessage::success())
+                        .await?;
+                    info!(
+                        "Reverse client {} authenticated for token {} on port {}",
+                        addr, token, port
+                    );
+                    self.ready.notify_waiters();
+                    Ok(())
+                }
+                None => {
+                    let error = "invalid reverse token".to_string();
+                    Self::send_auth_response(
+                        ws_sender,
+                        addr,
+                        AuthResponseMessage::failure(error.clone()),
+                    )
+                    .await?;
+                    warn!(
+                        "Reverse authentication from {} failed: invalid token {}",
+                        addr, token
+                    );
+                    Err(error)
+                }
+            }
+        } else {
+            let valid = {
+                let guard = self.forward_tokens.read().await;
+                guard.contains(&token)
+            };
+
+            if !valid {
+                let error = "invalid forward token".to_string();
+                Self::send_auth_response(
+                    ws_sender,
+                    addr,
+                    AuthResponseMessage::failure(error.clone()),
+                )
+                .await?;
+                warn!(
+                    "Forward authentication from {} failed: invalid token {}",
+                    addr, token
+                );
+                return Err(error);
+            }
+
+            Self::send_auth_response(ws_sender, addr, AuthResponseMessage::success()).await?;
+            info!("Forward client {} authenticated for token {}", addr, token);
+            self.ready.notify_waiters();
+            Ok(())
+        }
+    }
+
+    async fn send_auth_response(
+        ws_sender: &mut SplitSink<WebSocketStream<TcpStream>, WsMessage>,
+        addr: SocketAddr,
+        response: AuthResponseMessage,
+    ) -> Result<(), String> {
+        let payload = serde_json::to_string(&response)
+            .map_err(|e| format!("Failed to serialize auth response: {}", e))?;
+        ws_sender
+            .send(WsMessage::Text(payload))
+            .await
+            .map_err(|e| format!("Failed to send auth response to {}: {}", addr, e))
     }
 
     /// Ensure the reverse SOCKS listener for this token is running.
