@@ -768,6 +768,34 @@ impl LinkSocksServer {
                         WsMessage::Pong(_) => {
                             // Ignore pong frames
                         }
+                        WsMessage::Binary(payload) => {
+                            if !authenticated {
+                                let version = payload.first().copied();
+                                let message_type = payload.get(1).copied();
+                                let token_len = payload.get(2).copied();
+                                debug!(
+                                    "Pre-auth binary frame from {}: len={}, version={:?}, type={:?}, token_len_byte={:?}",
+                                    addr,
+                                    payload.len(),
+                                    version,
+                                    message_type,
+                                    token_len
+                                );
+                                if let Some(first) = payload.first() {
+                                    debug!(
+                                        "Binary payload first four bytes for {} => {:02X?}",
+                                        addr,
+                                        &payload.iter().take(4).collect::<Vec<_>>()
+                                    );
+                                }
+                            } else {
+                                debug!(
+                                    "Binary payload from authenticated client {} ignored for now ({} bytes)",
+                                    addr,
+                                    payload.len()
+                                );
+                            }
+                        }
                         WsMessage::Close(frame) => {
                             let _ = ws_sender.send(WsMessage::Close(frame)).await;
                             break;
