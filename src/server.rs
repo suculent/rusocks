@@ -28,6 +28,7 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 const AUTH_PROTOCOL_VERSION: u8 = 0x01;
 const AUTH_MESSAGE_TYPE: u8 = 0x01;
+const AUTH_RESPONSE_MESSAGE_TYPE: u8 = 0x02;
 const AUTH_INSTANCE_LEN: usize = 16;
 
 struct SocksTask {
@@ -1045,10 +1046,26 @@ impl LinkSocksServer {
         addr: SocketAddr,
         response: AuthResponseMessage,
     ) -> Result<(), String> {
-        let payload = serde_json::to_string(&response)
-            .map_err(|e| format!("Failed to serialize auth response: {}", e))?;
+        let mut frame = Vec::with_capacity(3);
+        frame.push(AUTH_PROTOCOL_VERSION);
+        frame.push(AUTH_RESPONSE_MESSAGE_TYPE);
+        frame.push(if response.success { 1 } else { 0 });
+
+        if !response.success {
+            let error_message = response
+                .error
+                .as_deref()
+                .unwrap_or("authentication failed");
+            let error_bytes = error_message.as_bytes();
+            if error_bytes.len() > u8::MAX as usize {
+                return Err("Auth response error message exceeds 255 bytes".to_string());
+            }
+            frame.push(error_bytes.len() as u8);
+            frame.extend_from_slice(error_bytes);
+        }
+
         ws_sender
-            .send(WsMessage::Text(payload))
+            .send(WsMessage::Binary(frame))
             .await
             .map_err(|e| format!("Failed to send auth response to {}: {}", addr, e))
     }
