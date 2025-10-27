@@ -8,7 +8,7 @@ LinkSocks server provides an HTTP API for dynamic token management and server mo
 
 ```bash
 # Start server with API enabled
-linksocks server --api-key your_secret_api_key
+rusocks server --api-key your_secret_api_key
 ```
 
 The API will be available at the same host and port as the WebSocket server (default: `http://localhost:8765`).

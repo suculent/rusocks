@@ -10,9 +10,9 @@ Reverse proxy mode distributes connections across connected clients.
 ## Setup
 ```bash
 # Server
-linksocks server -t token -r -p 9870
+rusocks server -t token -r -p 9870
 
 # Multiple clients
-linksocks client -t token -r &
-linksocks client -t token -r &
+rusocks client -t token -r &
+rusocks client -t token -r &
 ```

@@ -116,49 +116,49 @@ socks5://[username[:password]@]host[:port]
 
 ```bash
 # Basic forward proxy
-linksocks server -t my_token
-linksocks client -t my_token -u ws://localhost:8765 -p 9870
+rusocks server -t my_token
+rusocks client -t my_token -u ws://localhost:8765 -p 9870
 
 # With authentication
-linksocks client -t my_token -u ws://localhost:8765 -n user -w pass
+rusocks client -t my_token -u ws://localhost:8765 -n user -w pass
 
 # With upstream proxy
-linksocks client -t my_token -u ws://localhost:8765 -x socks5://upstream:1080
+rusocks client -t my_token -u ws://localhost:8765 -x socks5://upstream:1080
 ```
 
 ### Reverse Proxy
 
 ```bash
 # Basic reverse proxy
-linksocks server -t my_token -r -p 9870
-linksocks client -t my_token -u ws://localhost:8765 -r
+rusocks server -t my_token -r -p 9870
+rusocks client -t my_token -u ws://localhost:8765 -r
 
 # With SOCKS authentication
-linksocks server -t my_token -r -p 9870 -n user -w pass
-linksocks client -t my_token -u ws://localhost:8765 -r
+rusocks server -t my_token -r -p 9870 -n user -w pass
+rusocks client -t my_token -u ws://localhost:8765 -r
 ```
 
 ### Agent Proxy
 
 ```bash
 # Server with connector token
-linksocks server -t server_token -c connector_token -r -p 9870
+rusocks server -t server_token -c connector_token -r -p 9870
 
 # Provider client
-linksocks provider -t server_token -u ws://localhost:8765
+rusocks provider -t server_token -u ws://localhost:8765
 
 # Connector client
-linksocks connector -t connector_token -u ws://localhost:8765 -p 1180
+rusocks connector -t connector_token -u ws://localhost:8765 -p 1180
 ```
 
 ### Autonomy Mode
 
 ```bash
 # Server with autonomy enabled
-linksocks server -t server_token -r -a
+rusocks server -t server_token -r -a
 
 # Provider with custom connector
-linksocks provider -t server_token -c my_connector -u ws://localhost:8765
+rusocks provider -t server_token -c my_connector -u ws://localhost:8765
 ```
 
 ## Performance Tuning
@@ -167,21 +167,21 @@ linksocks provider -t server_token -c my_connector -u ws://localhost:8765
 
 Increase buffer size for high-throughput scenarios:
 ```bash
-linksocks server -b 65536
-linksocks client -t token -b 65536
+rusocks server -b 65536
+rusocks client -t token -b 65536
 ```
 
 ### Threading
 
 Use multiple threads for concurrent processing:
 ```bash
-linksocks client -t token -T 8
+rusocks client -t token -T 8
 ```
 
 ### Fast Open
 
 Enable fast open for lower latency (saves one RTT):
 ```bash
-linksocks server -f
-linksocks client -t token -f
+rusocks server -f
+rusocks client -t token -f
 ```

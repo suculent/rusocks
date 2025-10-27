@@ -17,13 +17,13 @@ Fast Open can be enabled independently on different components:
 ### Server Side (reverse proxy mode)
 ```bash
 # Enable Fast Open on server
-linksocks server -t token --fast-open
+rusocks server -t token --fast-open
 ```
 
 ### Client Side (forward proxy mode)
 ```bash
 # Enable Fast Open on client
-linksocks client -t token -u ws://server:8765 --fast-open
+rusocks client -t token -u ws://server:8765 --fast-open
 ```
 
 ## Timeout Settings and Connection Failure Handling
