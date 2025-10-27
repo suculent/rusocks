@@ -4,7 +4,9 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project Overview
 
-Rusocks is a Rust implementation of SOCKS5 over WebSocket proxy. It's a port of the Go-based LinkSocks project, providing both forward and reverse proxy modes with authentication, load balancing, and HTTP API management. The project includes Python bindings via PyO3.
+Rusocks is a Rust implementation of SOCKS5 over WebSocket proxy. It's a compatible port of the Go-based LinkSocks project, providing both forward and reverse proxy modes with authentication, load balancing, and HTTP API management. The project includes Python bindings via PyO3.
+
+**Protocol Compatibility**: Rusocks implements the same binary protocol as LinkSocks Go, allowing full interoperability - Rusocks clients can connect to LinkSocks Go servers and vice versa.
 
 ## Key Architecture Concepts
 
@@ -135,13 +137,21 @@ curl -X POST -H "X-API-Key: secret123" -H "Content-Type: application/json" \
 
 ### WebSocket Message Flow
 
+**Protocol Format**: Binary protocol over WebSocket binary frames (compatible with LinkSocks Go)
+
 1. Client sends `AuthMessage` with token + instance UUID
 2. Server validates, responds with `AuthResponseMessage`
 3. For each SOCKS5 connection:
-   - `ConnectMessage` with channel_id + target address
+   - `ConnectMessage` with channel_id + target address/port
    - `ConnectResponseMessage` with success/failure
-   - Bidirectional `DataMessage` stream (base64-encoded binary)
+   - Bidirectional `DataMessage` stream (raw binary)
    - `DisconnectMessage` to close channel
+
+**Protocol Details**: 
+- Uses LinkSocks binary protocol with version/type headers and length-prefixed fields
+- All messages start with: Version(1 byte) + Type(1 byte) + payload
+- Binary data is transmitted directly without base64 encoding
+- Fully compatible with LinkSocks Go implementation
 
 ### Platform-Specific Considerations
 

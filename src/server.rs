@@ -26,10 +26,6 @@ pub const DEFAULT_CHANNEL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default connect timeout
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-const AUTH_PROTOCOL_VERSION: u8 = 0x01;
-const AUTH_MESSAGE_TYPE: u8 = 0x01;
-const AUTH_RESPONSE_MESSAGE_TYPE: u8 = 0x02;
-const AUTH_INSTANCE_LEN: usize = 16;
 
 struct SocksTask {
     stop: Arc<Notify>,
@@ -872,58 +868,47 @@ impl LinkSocksServer {
     }
 
     fn parse_binary_auth(payload: &[u8]) -> Result<AuthMessage, String> {
-        if payload.len() < 3 {
-            return Err("binary auth payload too short".to_string());
+        use crate::message::parse_message;
+        
+        match parse_message(payload) {
+            Ok(_msg) => {
+                // We need to safely check if this is an AuthMessage
+                // Since we can't downcast trait objects directly, we'll re-parse it
+                if payload.len() >= 2 && payload[1] == crate::message::BINARY_TYPE_AUTH {
+                    // Re-parse directly as AuthMessage
+                    if payload.len() < 2 {
+                        return Err("Message too short".to_string());
+                    }
+                    
+                    let payload = &payload[2..];
+                    if payload.len() < 1 {
+                        return Err("Invalid auth message".to_string());
+                    }
+                    
+                    let token_len = payload[0] as usize;
+                    if payload.len() < 1 + token_len + 1 + 16 {
+                        return Err("Invalid auth message length".to_string());
+                    }
+                    
+                    let token = String::from_utf8(payload[1..1 + token_len].to_vec())
+                        .map_err(|e| format!("Invalid UTF-8 in token: {}", e))?;
+                    let reverse = payload[1 + token_len] != 0;
+                    
+                    let mut uuid_bytes = [0u8; 16];
+                    uuid_bytes.copy_from_slice(&payload[1 + token_len + 1..1 + token_len + 1 + 16]);
+                    let instance = Uuid::from_bytes(uuid_bytes);
+                    
+                    Ok(AuthMessage {
+                        token,
+                        reverse,
+                        instance,
+                    })
+                } else {
+                    Err("Expected auth message".to_string())
+                }
+            }
+            Err(e) => Err(e),
         }
-
-        let version = payload[0];
-        let message_type = payload[1];
-        let token_len = payload[2] as usize;
-
-        if version != AUTH_PROTOCOL_VERSION {
-            return Err(format!(
-                "unsupported auth protocol version: {:02X}",
-                version
-            ));
-        }
-
-        if message_type != AUTH_MESSAGE_TYPE {
-            return Err(format!(
-                "unsupported auth message type: {:02X}",
-                message_type
-            ));
-        }
-
-        let expected_len = 3 + token_len + 1 + AUTH_INSTANCE_LEN;
-        if payload.len() != expected_len {
-            return Err(format!(
-                "binary auth payload length mismatch: expected {}, got {}",
-                expected_len,
-                payload.len()
-            ));
-        }
-
-        let token_start = 3;
-        let token_end = token_start + token_len;
-        let token_bytes = &payload[token_start..token_end];
-        let token = String::from_utf8(token_bytes.to_vec())
-            .map_err(|_| "token is not valid UTF-8".to_string())?;
-
-        let reverse_flag_index = token_end;
-        let reverse = payload[reverse_flag_index] != 0;
-
-        let instance_start = reverse_flag_index + 1;
-        let instance_end = instance_start + AUTH_INSTANCE_LEN;
-        let instance_bytes = &payload[instance_start..instance_end];
-        let instance = Uuid::from_slice(instance_bytes)
-            .map_err(|e| format!("invalid instance UUID: {}", e))?;
-
-        Ok(AuthMessage {
-            message_type: "auth".to_string(),
-            token,
-            reverse,
-            instance,
-        })
     }
 
     async fn process_auth_message(
@@ -1018,20 +1003,10 @@ impl LinkSocksServer {
         addr: SocketAddr,
         response: AuthResponseMessage,
     ) -> Result<(), String> {
-        let mut frame = Vec::with_capacity(3);
-        frame.push(AUTH_PROTOCOL_VERSION);
-        frame.push(AUTH_RESPONSE_MESSAGE_TYPE);
-        frame.push(if response.success { 1 } else { 0 });
-
-        if !response.success {
-            let error_message = response.error.as_deref().unwrap_or("authentication failed");
-            let error_bytes = error_message.as_bytes();
-            if error_bytes.len() > u8::MAX as usize {
-                return Err("Auth response error message exceeds 255 bytes".to_string());
-            }
-            frame.push(error_bytes.len() as u8);
-            frame.extend_from_slice(error_bytes);
-        }
+        use crate::message::Message;
+        
+        let frame = response.pack()
+            .map_err(|e| format!("Failed to pack auth response: {}", e))?;
 
         ws_sender
             .send(WsMessage::Binary(frame))

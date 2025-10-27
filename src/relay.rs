@@ -1,7 +1,6 @@
 //! Relay implementation for rusocks
 
-use crate::message::{ConnectMessage, ConnectResponseMessage, DataMessage, DisconnectMessage};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use crate::message::{ConnectMessage, ConnectResponseMessage, DataMessage, DisconnectMessage, Message};
 use log::error;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -199,9 +198,9 @@ impl Relay {
                                 channel_id,
                                 format!("Failed to resolve address: {}", address),
                             );
-                            let _ = ws_sender
-                                .send(WsMessage::Text(serde_json::to_string(&response).unwrap()))
-                                .await;
+                            if let Ok(binary) = response.pack() {
+                                let _ = ws_sender.send(WsMessage::Binary(binary)).await;
+                            }
                             return Err(format!("Failed to resolve address: {}", address));
                         }
                     }
@@ -210,9 +209,9 @@ impl Relay {
                             channel_id,
                             format!("Failed to resolve address: {}", e),
                         );
-                        let _ = ws_sender
-                            .send(WsMessage::Text(serde_json::to_string(&response).unwrap()))
-                            .await;
+                        if let Ok(binary) = response.pack() {
+                            let _ = ws_sender.send(WsMessage::Binary(binary)).await;
+                        }
                         return Err(format!("Failed to resolve address: {}", e));
                     }
                 }
@@ -230,9 +229,9 @@ impl Relay {
 
                 // Send success response
                 let response = ConnectResponseMessage::success(channel_id);
-                let _ = ws_sender
-                    .send(WsMessage::Text(serde_json::to_string(&response).unwrap()))
-                    .await;
+                if let Ok(binary) = response.pack() {
+                    let _ = ws_sender.send(WsMessage::Binary(binary)).await;
+                }
 
                 // Create a new connection for data transfer
                 let transfer_stream = match TcpStream::connect(addr).await {
@@ -255,9 +254,9 @@ impl Relay {
                     channel_id,
                     format!("Connection failed: {}", e),
                 );
-                let _ = ws_sender
-                    .send(WsMessage::Text(serde_json::to_string(&response).unwrap()))
-                    .await;
+                if let Ok(binary) = response.pack() {
+                    let _ = ws_sender.send(WsMessage::Binary(binary)).await;
+                }
 
                 // Remove channel
                 self.channels.write().await.remove(&channel_id);
@@ -268,9 +267,9 @@ impl Relay {
                 // Connection timeout
                 let response =
                     ConnectResponseMessage::failure(channel_id, "Connection timeout".to_string());
-                let _ = ws_sender
-                    .send(WsMessage::Text(serde_json::to_string(&response).unwrap()))
-                    .await;
+                if let Ok(binary) = response.pack() {
+                    let _ = ws_sender.send(WsMessage::Binary(binary)).await;
+                }
 
                 // Remove channel
                 self.channels.write().await.remove(&channel_id);
@@ -354,12 +353,9 @@ impl Relay {
 
             // Send disconnect message
             let disconnect_msg = DisconnectMessage::new(channel_id);
-            let _ = channel
-                .ws_sender
-                .send(WsMessage::Text(
-                    serde_json::to_string(&disconnect_msg).unwrap(),
-                ))
-                .await;
+            if let Ok(binary) = disconnect_msg.pack() {
+                let _ = channel.ws_sender.send(WsMessage::Binary(binary)).await;
+            }
 
             // Close TCP stream
             if let Some(stream) = &mut channel.stream {
@@ -396,13 +392,8 @@ impl Relay {
             // Check if channel is connected
             match channel.state {
                 ChannelState::Connected => {
-                    // Decode data
-                    let _data = match STANDARD.decode(&data_msg.data) {
-                        Ok(data) => data,
-                        Err(e) => {
-                            return Err(format!("Failed to decode data: {}", e));
-                        }
-                    };
+                    // Get data directly (no base64 decoding needed with binary protocol)
+                    let _data = data_msg.data.clone();
 
                     // Send data to TCP stream
                     if let Some(_stream) = &channel.stream {

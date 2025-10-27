@@ -76,13 +76,15 @@ Rusocks supports the same platforms as the original LinkSocks project. The platf
 
 ## Migration Notes
 
-This project is a port of the Go-based LinkSocks project to Rust. The migration preserves the same functionality and API, but takes advantage of Rust's safety features and async runtime.
+This project is a compatible port of the Go-based LinkSocks project to Rust. The migration preserves the same functionality and API, while taking advantage of Rust's safety features and async runtime.
+
+**Protocol Compatibility**: Rusocks implements the same binary protocol as LinkSocks Go, ensuring full interoperability - Rusocks clients can connect to LinkSocks Go servers and vice versa.
 
 Key differences:
 - Uses Tokio for async I/O
 - Uses Rust's type system for improved safety
 - Maintains the same command-line interface
-- Preserves the same WebSocket protocol
+- **Compatible with LinkSocks Go binary protocol**
 
 ## Advanced Features
 

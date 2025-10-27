@@ -69,16 +69,16 @@ impl WSConn {
     }
 
     /// Write a message to the WebSocket
-    pub async fn write_message<T: Message + serde::Serialize>(
+    pub async fn write_message<T: Message>(
         &self,
         message: T,
     ) -> Result<(), String> {
-        let json = match serde_json::to_string(&message) {
-            Ok(json) => json,
-            Err(e) => return Err(format!("Failed to serialize message: {}", e)),
+        let binary = match message.pack() {
+            Ok(binary) => binary,
+            Err(e) => return Err(format!("Failed to pack message: {}", e)),
         };
 
-        self.write_raw_message(WsMessage::Text(json)).await
+        self.write_raw_message(WsMessage::Binary(binary)).await
     }
 
     /// Write a raw WebSocket message

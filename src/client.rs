@@ -1,8 +1,7 @@
 //! Client implementation for rusocks
 
-use crate::message::{AuthMessage, ConnectorMessage};
+use crate::message::{AuthMessage, ConnectorMessage, Message};
 use log::error;
-use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -299,10 +298,10 @@ impl LinkSocksClient {
 
         if let Some(sender) = auth_sender {
             let auth_message = AuthMessage::new(self.token.clone(), self.options.reverse);
-            let payload = serde_json::to_string(&auth_message)
-                .map_err(|e| format!("Failed to serialize auth message: {}", e))?;
+            let payload = auth_message.pack()
+                .map_err(|e| format!("Failed to pack auth message: {}", e))?;
             sender
-                .send(WsMessage::Text(payload))
+                .send(WsMessage::Binary(payload))
                 .await
                 .map_err(|e| format!("Failed to send auth message: {}", e))?;
         } else {
@@ -335,11 +334,11 @@ impl LinkSocksClient {
         drop(ws_sender);
 
         let message = ConnectorMessage::add(connector_token.to_string());
-        let payload = serde_json::to_string(&message)
-            .map_err(|e| format!("Failed to serialize connector message: {}", e))?;
+        let payload = message.pack()
+            .map_err(|e| format!("Failed to pack connector message: {}", e))?;
 
         sender
-            .send(WsMessage::Text(payload))
+            .send(WsMessage::Binary(payload))
             .await
             .map_err(|e| format!("Failed to send connector message: {}", e))?;
         Ok(())
