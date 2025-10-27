@@ -1,0 +1,17 @@
+README.md
+setup.py
+rusocks/__init__.py
+rusocks/_base.py
+rusocks/_cli.py
+rusocks/_client.py
+rusocks/_server.py
+rusocks.egg-info/PKG-INFO
+rusocks.egg-info/SOURCES.txt
+rusocks.egg-info/dependency_links.txt
+rusocks.egg-info/entry_points.txt
+rusocks.egg-info/not-zip-safe
+rusocks.egg-info/requires.txt
+rusocks.egg-info/top_level.txt
+rusockslib/__init__.py
+tests/test_rusockslib.py
+tests/test_user_agent.py

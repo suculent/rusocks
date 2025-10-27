@@ -1,0 +1,2 @@
+[console_scripts]
+rusocks = rusocks._cli:cli
