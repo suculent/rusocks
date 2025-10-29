@@ -1,117 +1,20 @@
 //! Connection handling for rusocks
 
-use crate::message::Message;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error};
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::{
     tungstenite::{client::IntoClientRequest, Error as WsError, Message as WsMessage},
     MaybeTlsStream, WebSocketStream,
 };
 use url::Url;
-use uuid::Uuid;
-
-/// WebSocket connection
-pub struct WSConn {
-    /// Connection ID
-    _id: Uuid,
-
-    /// Client IP address
-    client_ip: Arc<RwLock<String>>,
-
-    /// Connection label
-    label: Arc<RwLock<String>>,
-
-    /// WebSocket sender
-    sender: mpsc::Sender<WsMessage>,
-
-    /// Closed flag
-    closed: Arc<Mutex<bool>>,
-}
-
-impl WSConn {
-    /// Create a new WebSocket connection
-    pub fn new(sender: mpsc::Sender<WsMessage>, label: &str) -> Self {
-        WSConn {
-            _id: Uuid::new_v4(),
-            client_ip: Arc::new(RwLock::new(String::new())),
-            label: Arc::new(RwLock::new(label.to_string())),
-            sender,
-            closed: Arc::new(Mutex::new(false)),
-        }
-    }
-
-    /// Set the client IP from a request
-    pub async fn set_client_ip_from_request(&self, addr: SocketAddr) {
-        let mut client_ip = self.client_ip.write().await;
-        *client_ip = addr.to_string();
-    }
-
-    /// Set the connection label
-    pub async fn set_label(&self, label: &str) {
-        let mut l = self.label.write().await;
-        *l = label.to_string();
-    }
-
-    /// Get the connection label
-    pub async fn label(&self) -> String {
-        let l = self.label.read().await;
-        l.clone()
-    }
-
-    /// Get the client IP
-    pub async fn get_client_ip(&self) -> String {
-        let client_ip = self.client_ip.read().await;
-        client_ip.clone()
-    }
-
-    /// Write a message to the WebSocket
-    pub async fn write_message<T: Message>(&self, message: T) -> Result<(), String> {
-        let binary = match message.pack() {
-            Ok(binary) => binary,
-            Err(e) => return Err(format!("Failed to pack message: {}", e)),
-        };
-
-        self.write_raw_message(WsMessage::Binary(binary)).await
-    }
-
-    /// Write a raw WebSocket message
-    pub async fn write_raw_message(&self, message: WsMessage) -> Result<(), String> {
-        // Check if closed
-        let closed = self.closed.lock().await;
-        if *closed {
-            return Err("Connection closed".to_string());
-        }
-
-        // Send message
-        match self.sender.send(message).await {
-            Ok(_) => Ok(()),
-            Err(e) => Err(format!("Failed to send message: {}", e)),
-        }
-    }
-
-    /// Close the connection
-    pub async fn close(&self) {
-        let mut closed = self.closed.lock().await;
-        if !*closed {
-            *closed = true;
-
-            // Send close message
-            let _ = self.sender.send(WsMessage::Close(None)).await;
-        }
-    }
-}
 
 /// WebSocket message handler
 pub struct WSHandler {
     /// WebSocket stream
     stream: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-
-    /// Message sender
-    sender: mpsc::Sender<WsMessage>,
 
     /// Message receiver
     receiver: mpsc::Receiver<WsMessage>,
@@ -130,7 +33,6 @@ impl WSHandler {
         (
             WSHandler {
                 stream: Some(stream),
-                sender: sender.clone(),
                 receiver,
                 closed: Arc::new(Mutex::new(false)),
             },
