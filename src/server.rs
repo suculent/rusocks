@@ -26,7 +26,6 @@ pub const DEFAULT_CHANNEL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default connect timeout
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-
 struct SocksTask {
     stop: Arc<Notify>,
     is_running: Arc<AtomicBool>,
@@ -869,7 +868,7 @@ impl LinkSocksServer {
 
     fn parse_binary_auth(payload: &[u8]) -> Result<AuthMessage, String> {
         use crate::message::parse_message;
-        
+
         match parse_message(payload) {
             Ok(_msg) => {
                 // We need to safely check if this is an AuthMessage
@@ -879,25 +878,25 @@ impl LinkSocksServer {
                     if payload.len() < 2 {
                         return Err("Message too short".to_string());
                     }
-                    
+
                     let payload = &payload[2..];
                     if payload.len() < 1 {
                         return Err("Invalid auth message".to_string());
                     }
-                    
+
                     let token_len = payload[0] as usize;
                     if payload.len() < 1 + token_len + 1 + 16 {
                         return Err("Invalid auth message length".to_string());
                     }
-                    
+
                     let token = String::from_utf8(payload[1..1 + token_len].to_vec())
                         .map_err(|e| format!("Invalid UTF-8 in token: {}", e))?;
                     let reverse = payload[1 + token_len] != 0;
-                    
+
                     let mut uuid_bytes = [0u8; 16];
                     uuid_bytes.copy_from_slice(&payload[1 + token_len + 1..1 + token_len + 1 + 16]);
                     let instance = Uuid::from_bytes(uuid_bytes);
-                    
+
                     Ok(AuthMessage {
                         token,
                         reverse,
@@ -1004,8 +1003,9 @@ impl LinkSocksServer {
         response: AuthResponseMessage,
     ) -> Result<(), String> {
         use crate::message::Message;
-        
-        let frame = response.pack()
+
+        let frame = response
+            .pack()
             .map_err(|e| format!("Failed to pack auth response: {}", e))?;
 
         ws_sender

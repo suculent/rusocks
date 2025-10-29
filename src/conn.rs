@@ -69,10 +69,7 @@ impl WSConn {
     }
 
     /// Write a message to the WebSocket
-    pub async fn write_message<T: Message>(
-        &self,
-        message: T,
-    ) -> Result<(), String> {
+    pub async fn write_message<T: Message>(&self, message: T) -> Result<(), String> {
         let binary = match message.pack() {
             Ok(binary) => binary,
             Err(e) => return Err(format!("Failed to pack message: {}", e)),
@@ -147,27 +144,19 @@ impl WSHandler {
         let stream = self.stream.take().ok_or(WsError::ConnectionClosed)?;
         let (mut ws_sender, mut ws_receiver) = stream.split();
 
-        // Reader task
-        let sender = self.sender.clone();
+        // Reader task: consume incoming messages but do not forward them to outbound channel
         let closed = self.closed.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = ws_receiver.next().await {
                 match msg {
                     Ok(msg) => {
-                        // Handle message
                         if msg.is_close() {
-                            // Close connection
                             let mut c = closed.lock().await;
                             *c = true;
                             break;
                         }
-
-                        // Forward message
-                        if let Err(e) = sender.send(msg).await {
-                            error!("Failed to forward message: {}", e);
-                            break;
-                        }
+                        // Ignore all incoming messages (auth responses, pings, etc.)
                     }
                     Err(e) => {
                         error!("WebSocket error: {}", e);
@@ -176,7 +165,6 @@ impl WSHandler {
                 }
             }
 
-            // Connection closed
             let mut c = closed.lock().await;
             *c = true;
         });

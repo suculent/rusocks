@@ -36,7 +36,7 @@ pub const DATA_COMPRESSION_GZIP: u8 = 0x01;
 pub trait Message: fmt::Debug + Send + Sync {
     /// Get the message type
     fn message_type(&self) -> &'static str;
-    
+
     /// Pack message into binary format
     fn pack(&self) -> Result<Vec<u8>, String>;
 }
@@ -58,7 +58,11 @@ fn bytes_to_uuid(bytes: &[u8]) -> Result<Uuid, String> {
 
 /// Helper function to convert bool to byte
 fn bool_to_byte(b: bool) -> u8 {
-    if b { 1 } else { 0 }
+    if b {
+        1
+    } else {
+        0
+    }
 }
 
 /// Helper function to convert byte to bool
@@ -119,13 +123,13 @@ impl Message for AuthMessage {
     fn message_type(&self) -> &'static str {
         "auth"
     }
-    
+
     fn pack(&self) -> Result<Vec<u8>, String> {
         // Version(1) + Type(1) + TokenLen(1) + Token(N) + Reverse(1) + Instance(16)
         let mut buf = Vec::new();
         buf.push(PROTOCOL_VERSION);
         buf.push(BINARY_TYPE_AUTH);
-        
+
         if self.token.len() > 255 {
             return Err("Token too long (max 255 bytes)".to_string());
         }
@@ -133,7 +137,7 @@ impl Message for AuthMessage {
         buf.extend_from_slice(self.token.as_bytes());
         buf.push(bool_to_byte(self.reverse));
         buf.extend_from_slice(&uuid_to_bytes(&self.instance));
-        
+
         Ok(buf)
     }
 }
@@ -163,14 +167,14 @@ impl Message for AuthResponseMessage {
     fn message_type(&self) -> &'static str {
         "auth_response"
     }
-    
+
     fn pack(&self) -> Result<Vec<u8>, String> {
         // Version(1) + Type(1) + Success(1) + [ErrorLen(1) + Error(N) if !Success]
         let mut buf = Vec::new();
         buf.push(PROTOCOL_VERSION);
         buf.push(BINARY_TYPE_AUTH_RESPONSE);
         buf.push(bool_to_byte(self.success));
-        
+
         if !self.success {
             if let Some(error) = &self.error {
                 if error.len() > 255 {
@@ -180,7 +184,7 @@ impl Message for AuthResponseMessage {
                 buf.extend_from_slice(error.as_bytes());
             }
         }
-        
+
         Ok(buf)
     }
 }
@@ -208,13 +212,13 @@ impl AuthResponseMessage {
 pub struct ConnectMessage {
     /// Protocol (tcp or udp)
     pub protocol: String,
-    
+
     /// Unique channel ID for this connection
     pub channel_id: Uuid,
 
     /// Target address to connect to
     pub address: String,
-    
+
     /// Target port
     pub port: u16,
 }
@@ -223,7 +227,7 @@ impl Message for ConnectMessage {
     fn message_type(&self) -> &'static str {
         "connect"
     }
-    
+
     fn pack(&self) -> Result<Vec<u8>, String> {
         // Version(1) + Type(1) + Protocol(1) + ChannelID(16) + [AddrLen(1) + Addr(N) + Port(2) if TCP]
         let mut buf = Vec::new();
@@ -231,7 +235,7 @@ impl Message for ConnectMessage {
         buf.push(BINARY_TYPE_CONNECT);
         buf.push(protocol_to_byte(&self.protocol));
         buf.extend_from_slice(&uuid_to_bytes(&self.channel_id));
-        
+
         if self.protocol == "tcp" {
             if self.address.len() > 255 {
                 return Err("Address too long (max 255 bytes)".to_string());
@@ -241,7 +245,7 @@ impl Message for ConnectMessage {
             buf.push((self.port >> 8) as u8);
             buf.push(self.port as u8);
         }
-        
+
         Ok(buf)
     }
 }
@@ -257,7 +261,7 @@ impl ConnectMessage {
         } else {
             (address, 80)
         };
-        
+
         ConnectMessage {
             protocol: "tcp".to_string(),
             channel_id: Uuid::new_v4(),
@@ -275,7 +279,7 @@ impl ConnectMessage {
         } else {
             (address, 80)
         };
-        
+
         ConnectMessage {
             protocol: "tcp".to_string(),
             channel_id,
@@ -283,7 +287,7 @@ impl ConnectMessage {
             port,
         }
     }
-    
+
     /// Get the full address as string (host:port)
     pub fn get_address(&self) -> String {
         format!("{}:{}", self.address, self.port)
@@ -307,7 +311,7 @@ impl Message for ConnectResponseMessage {
     fn message_type(&self) -> &'static str {
         "connect_response"
     }
-    
+
     fn pack(&self) -> Result<Vec<u8>, String> {
         // Version(1) + Type(1) + Success(1) + ChannelID(16) + [ErrorLen(1) + Error(N) if !Success]
         let mut buf = Vec::new();
@@ -315,7 +319,7 @@ impl Message for ConnectResponseMessage {
         buf.push(BINARY_TYPE_CONNECT_RESPONSE);
         buf.push(bool_to_byte(self.success));
         buf.extend_from_slice(&uuid_to_bytes(&self.channel_id));
-        
+
         if !self.success {
             if let Some(error) = &self.error {
                 if error.len() > 255 {
@@ -325,7 +329,7 @@ impl Message for ConnectResponseMessage {
                 buf.extend_from_slice(error.as_bytes());
             }
         }
-        
+
         Ok(buf)
     }
 }
@@ -355,13 +359,13 @@ impl ConnectResponseMessage {
 pub struct DataMessage {
     /// Protocol (tcp or udp)
     pub protocol: String,
-    
+
     /// Channel ID this data is for
     pub channel_id: Uuid,
 
     /// Binary data payload
     pub data: Vec<u8>,
-    
+
     /// Compression type
     pub compression: u8,
 }
@@ -370,7 +374,7 @@ impl Message for DataMessage {
     fn message_type(&self) -> &'static str {
         "data"
     }
-    
+
     fn pack(&self) -> Result<Vec<u8>, String> {
         // Version(1) + Type(1) + Protocol(1) + ChannelID(16) + Compression(1) + DataLen(4) + Data(N)
         let mut buf = Vec::new();
@@ -379,14 +383,14 @@ impl Message for DataMessage {
         buf.push(protocol_to_byte(&self.protocol));
         buf.extend_from_slice(&uuid_to_bytes(&self.channel_id));
         buf.push(self.compression);
-        
+
         let data_len = self.data.len() as u32;
         buf.push((data_len >> 24) as u8);
         buf.push((data_len >> 16) as u8);
         buf.push((data_len >> 8) as u8);
         buf.push(data_len as u8);
         buf.extend_from_slice(&self.data);
-        
+
         Ok(buf)
     }
 }
@@ -413,7 +417,7 @@ impl DataMessage {
 pub struct DisconnectMessage {
     /// Channel ID to disconnect
     pub channel_id: Uuid,
-    
+
     /// Optional error message
     pub error: Option<String>,
 }
@@ -422,14 +426,14 @@ impl Message for DisconnectMessage {
     fn message_type(&self) -> &'static str {
         "disconnect"
     }
-    
+
     fn pack(&self) -> Result<Vec<u8>, String> {
         // Version(1) + Type(1) + ChannelID(16) + [ErrorLen(1) + Error(N) if error]
         let mut buf = Vec::new();
         buf.push(PROTOCOL_VERSION);
         buf.push(BINARY_TYPE_DISCONNECT);
         buf.extend_from_slice(&uuid_to_bytes(&self.channel_id));
-        
+
         if let Some(error) = &self.error {
             if error.len() > 255 {
                 return Err("Error message too long (max 255 bytes)".to_string());
@@ -437,7 +441,7 @@ impl Message for DisconnectMessage {
             buf.push(error.len() as u8);
             buf.extend_from_slice(error.as_bytes());
         }
-        
+
         Ok(buf)
     }
 }
@@ -463,13 +467,13 @@ impl Message for PartnersMessage {
     fn message_type(&self) -> &'static str {
         "partners"
     }
-    
+
     fn pack(&self) -> Result<Vec<u8>, String> {
         // Version(1) + Type(1) + DataLen(4) + Data(JSON)
         let mut buf = Vec::new();
         buf.push(PROTOCOL_VERSION);
         buf.push(BINARY_TYPE_PARTNERS);
-        
+
         let json_data = serde_json::json!({"count": self.count}).to_string();
         let data_len = json_data.len() as u32;
         buf.push((data_len >> 24) as u8);
@@ -477,7 +481,7 @@ impl Message for PartnersMessage {
         buf.push((data_len >> 8) as u8);
         buf.push(data_len as u8);
         buf.extend_from_slice(json_data.as_bytes());
-        
+
         Ok(buf)
     }
 }
@@ -506,21 +510,21 @@ impl Message for ConnectorMessage {
     fn message_type(&self) -> &'static str {
         "connector"
     }
-    
+
     fn pack(&self) -> Result<Vec<u8>, String> {
         // Version(1) + Type(1) + ChannelID(16) + TokenLen(1) + Token(N) + Operation(1)
         let mut buf = Vec::new();
         buf.push(PROTOCOL_VERSION);
         buf.push(BINARY_TYPE_CONNECTOR);
         buf.extend_from_slice(&uuid_to_bytes(&self.channel_id));
-        
+
         if self.connector_token.len() > 255 {
             return Err("Connector token too long (max 255 bytes)".to_string());
         }
         buf.push(self.connector_token.len() as u8);
         buf.extend_from_slice(self.connector_token.as_bytes());
         buf.push(operation_to_byte(&self.operation));
-        
+
         Ok(buf)
     }
 }
@@ -565,7 +569,7 @@ impl Message for ConnectorResponseMessage {
     fn message_type(&self) -> &'static str {
         "connector_response"
     }
-    
+
     fn pack(&self) -> Result<Vec<u8>, String> {
         // Version(1) + Type(1) + ChannelID(16) + Success(1) + [ErrorLen(1) + Error(N) if !Success] + [TokenLen(1) + Token(N) if Success && HasToken]
         let mut buf = Vec::new();
@@ -573,7 +577,7 @@ impl Message for ConnectorResponseMessage {
         buf.push(BINARY_TYPE_CONNECTOR_RESPONSE);
         buf.extend_from_slice(&uuid_to_bytes(&self.channel_id));
         buf.push(bool_to_byte(self.success));
-        
+
         if !self.success {
             if let Some(error) = &self.error {
                 if error.len() > 255 {
@@ -589,7 +593,7 @@ impl Message for ConnectorResponseMessage {
             buf.push(token.len() as u8);
             buf.extend_from_slice(token.as_bytes());
         }
-        
+
         Ok(buf)
     }
 }
@@ -631,15 +635,15 @@ pub fn parse_message(data: &[u8]) -> Result<Box<dyn Message>, String> {
     if data.len() < 2 {
         return Err("Message too short".to_string());
     }
-    
+
     let version = data[0];
     if version != PROTOCOL_VERSION {
         return Err(format!("Unsupported protocol version: {:#x}", version));
     }
-    
+
     let msg_type = data[1];
     let payload = &data[2..];
-    
+
     match msg_type {
         BINARY_TYPE_AUTH => parse_auth_message(payload),
         BINARY_TYPE_AUTH_RESPONSE => parse_auth_response_message(payload),
@@ -658,17 +662,17 @@ fn parse_auth_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
     if payload.len() < 1 {
         return Err("Invalid auth message".to_string());
     }
-    
+
     let token_len = payload[0] as usize;
     if payload.len() < 1 + token_len + 1 + 16 {
         return Err("Invalid auth message length".to_string());
     }
-    
+
     let token = String::from_utf8(payload[1..1 + token_len].to_vec())
         .map_err(|e| format!("Invalid UTF-8 in token: {}", e))?;
     let reverse = byte_to_bool(payload[1 + token_len]);
     let instance = bytes_to_uuid(&payload[1 + token_len + 1..1 + token_len + 1 + 16])?;
-    
+
     Ok(Box::new(AuthMessage {
         token,
         reverse,
@@ -680,18 +684,20 @@ fn parse_auth_response_message(payload: &[u8]) -> Result<Box<dyn Message>, Strin
     if payload.len() < 1 {
         return Err("Invalid auth response message".to_string());
     }
-    
+
     let success = byte_to_bool(payload[0]);
     let mut error = None;
-    
+
     if !success && payload.len() > 1 {
         let error_len = payload[1] as usize;
         if payload.len() >= 2 + error_len {
-            error = Some(String::from_utf8(payload[2..2 + error_len].to_vec())
-                .map_err(|e| format!("Invalid UTF-8 in error: {}", e))?);
+            error = Some(
+                String::from_utf8(payload[2..2 + error_len].to_vec())
+                    .map_err(|e| format!("Invalid UTF-8 in error: {}", e))?,
+            );
         }
     }
-    
+
     Ok(Box::new(AuthResponseMessage { success, error }))
 }
 
@@ -699,21 +705,21 @@ fn parse_connect_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
     if payload.len() < 17 {
         return Err("Invalid connect message".to_string());
     }
-    
+
     let protocol = byte_to_protocol(payload[0]).to_string();
     let channel_id = bytes_to_uuid(&payload[1..17])?;
-    
+
     let (address, port) = if protocol == "tcp" {
         let payload = &payload[17..];
         if payload.len() < 1 {
             return Err("Invalid TCP connect message".to_string());
         }
-        
+
         let addr_len = payload[0] as usize;
         if payload.len() < 1 + addr_len + 2 {
             return Err("Invalid TCP connect message length".to_string());
         }
-        
+
         let address = String::from_utf8(payload[1..1 + addr_len].to_vec())
             .map_err(|e| format!("Invalid UTF-8 in address: {}", e))?;
         let port = (payload[1 + addr_len] as u16) << 8 | payload[1 + addr_len + 1] as u16;
@@ -721,7 +727,7 @@ fn parse_connect_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
     } else {
         (String::new(), 0)
     };
-    
+
     Ok(Box::new(ConnectMessage {
         protocol,
         channel_id,
@@ -734,19 +740,21 @@ fn parse_connect_response_message(payload: &[u8]) -> Result<Box<dyn Message>, St
     if payload.len() < 17 {
         return Err("Invalid connect response message".to_string());
     }
-    
+
     let success = byte_to_bool(payload[0]);
     let channel_id = bytes_to_uuid(&payload[1..17])?;
     let mut error = None;
-    
+
     if !success && payload.len() > 17 {
         let error_len = payload[17] as usize;
         if payload.len() >= 18 + error_len {
-            error = Some(String::from_utf8(payload[18..18 + error_len].to_vec())
-                .map_err(|e| format!("Invalid UTF-8 in error: {}", e))?);
+            error = Some(
+                String::from_utf8(payload[18..18 + error_len].to_vec())
+                    .map_err(|e| format!("Invalid UTF-8 in error: {}", e))?,
+            );
         }
     }
-    
+
     Ok(Box::new(ConnectResponseMessage {
         channel_id,
         success,
@@ -758,7 +766,7 @@ fn parse_data_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
     if payload.len() < 22 {
         return Err("Invalid data message".to_string());
     }
-    
+
     let protocol = byte_to_protocol(payload[0]).to_string();
     let channel_id = bytes_to_uuid(&payload[1..17])?;
     let compression = payload[17];
@@ -766,13 +774,13 @@ fn parse_data_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
         | ((payload[19] as u32) << 16)
         | ((payload[20] as u32) << 8)
         | (payload[21] as u32);
-    
+
     if payload.len() < 22 + data_len as usize {
         return Err("Invalid data message length".to_string());
     }
-    
+
     let data = payload[22..22 + data_len as usize].to_vec();
-    
+
     Ok(Box::new(DataMessage {
         protocol,
         channel_id,
@@ -785,18 +793,20 @@ fn parse_disconnect_message(payload: &[u8]) -> Result<Box<dyn Message>, String> 
     if payload.len() < 16 {
         return Err("Invalid disconnect message".to_string());
     }
-    
+
     let channel_id = bytes_to_uuid(&payload[0..16])?;
     let mut error = None;
-    
+
     if payload.len() > 16 {
         let error_len = payload[16] as usize;
         if payload.len() >= 17 + error_len && error_len > 0 {
-            error = Some(String::from_utf8(payload[17..17 + error_len].to_vec())
-                .map_err(|e| format!("Invalid UTF-8 in error: {}", e))?);
+            error = Some(
+                String::from_utf8(payload[17..17 + error_len].to_vec())
+                    .map_err(|e| format!("Invalid UTF-8 in error: {}", e))?,
+            );
         }
     }
-    
+
     Ok(Box::new(DisconnectMessage { channel_id, error }))
 }
 
@@ -804,23 +814,23 @@ fn parse_connector_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
     if payload.len() < 16 {
         return Err("Invalid connector message".to_string());
     }
-    
+
     let channel_id = bytes_to_uuid(&payload[0..16])?;
     let payload = &payload[16..];
-    
+
     if payload.len() < 1 {
         return Err("Invalid connector message length".to_string());
     }
-    
+
     let token_len = payload[0] as usize;
     if payload.len() < 1 + token_len + 1 {
         return Err("Invalid connector message length".to_string());
     }
-    
+
     let connector_token = String::from_utf8(payload[1..1 + token_len].to_vec())
         .map_err(|e| format!("Invalid UTF-8 in connector token: {}", e))?;
     let operation = byte_to_operation(payload[1 + token_len]).to_string();
-    
+
     Ok(Box::new(ConnectorMessage {
         channel_id,
         operation,
@@ -832,26 +842,30 @@ fn parse_connector_response_message(payload: &[u8]) -> Result<Box<dyn Message>, 
     if payload.len() < 17 {
         return Err("Invalid connector response message".to_string());
     }
-    
+
     let channel_id = bytes_to_uuid(&payload[0..16])?;
     let success = byte_to_bool(payload[16]);
     let mut error = None;
     let mut connector_token = None;
-    
+
     if !success && payload.len() > 17 {
         let error_len = payload[17] as usize;
         if payload.len() >= 18 + error_len {
-            error = Some(String::from_utf8(payload[18..18 + error_len].to_vec())
-                .map_err(|e| format!("Invalid UTF-8 in error: {}", e))?);
+            error = Some(
+                String::from_utf8(payload[18..18 + error_len].to_vec())
+                    .map_err(|e| format!("Invalid UTF-8 in error: {}", e))?,
+            );
         }
     } else if success && payload.len() > 17 {
         let token_len = payload[17] as usize;
         if payload.len() >= 18 + token_len {
-            connector_token = Some(String::from_utf8(payload[18..18 + token_len].to_vec())
-                .map_err(|e| format!("Invalid UTF-8 in connector token: {}", e))?);
+            connector_token = Some(
+                String::from_utf8(payload[18..18 + token_len].to_vec())
+                    .map_err(|e| format!("Invalid UTF-8 in connector token: {}", e))?,
+            );
         }
     }
-    
+
     Ok(Box::new(ConnectorResponseMessage {
         channel_id,
         success,
@@ -864,27 +878,27 @@ fn parse_partners_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
     if payload.len() < 4 {
         return Err("Invalid partners message".to_string());
     }
-    
+
     let data_len = ((payload[0] as u32) << 24)
         | ((payload[1] as u32) << 16)
         | ((payload[2] as u32) << 8)
         | (payload[3] as u32);
-    
+
     if payload.len() < 4 + data_len as usize {
         return Err("Invalid partners message length".to_string());
     }
-    
+
     let json_data = &payload[4..4 + data_len as usize];
     let json_str = String::from_utf8(json_data.to_vec())
         .map_err(|e| format!("Invalid UTF-8 in JSON: {}", e))?;
-    
+
     #[derive(Deserialize)]
     struct PartnersData {
         count: usize,
     }
-    
-    let data: PartnersData = serde_json::from_str(&json_str)
-        .map_err(|e| format!("Invalid JSON: {}", e))?;
-    
+
+    let data: PartnersData =
+        serde_json::from_str(&json_str).map_err(|e| format!("Invalid JSON: {}", e))?;
+
     Ok(Box::new(PartnersMessage { count: data.count }))
 }

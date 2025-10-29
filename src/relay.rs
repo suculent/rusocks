@@ -1,6 +1,8 @@
 //! Relay implementation for rusocks
 
-use crate::message::{ConnectMessage, ConnectResponseMessage, DataMessage, DisconnectMessage, Message};
+use crate::message::{
+    ConnectMessage, ConnectResponseMessage, DataMessage, DisconnectMessage, Message,
+};
 use log::error;
 use std::collections::HashMap;
 use std::net::SocketAddr;

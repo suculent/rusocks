@@ -298,7 +298,8 @@ impl LinkSocksClient {
 
         if let Some(sender) = auth_sender {
             let auth_message = AuthMessage::new(self.token.clone(), self.options.reverse);
-            let payload = auth_message.pack()
+            let payload = auth_message
+                .pack()
                 .map_err(|e| format!("Failed to pack auth message: {}", e))?;
             sender
                 .send(WsMessage::Binary(payload))
@@ -334,7 +335,8 @@ impl LinkSocksClient {
         drop(ws_sender);
 
         let message = ConnectorMessage::add(connector_token.to_string());
-        let payload = message.pack()
+        let payload = message
+            .pack()
             .map_err(|e| format!("Failed to pack connector message: {}", e))?;
 
         sender
