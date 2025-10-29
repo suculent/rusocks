@@ -2,7 +2,7 @@
 
 use crate::message::Message;
 use futures_util::{SinkExt, StreamExt};
-use log::error;
+use log::{debug, error};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -151,12 +151,22 @@ impl WSHandler {
             while let Some(msg) = ws_receiver.next().await {
                 match msg {
                     Ok(msg) => {
-                        if msg.is_close() {
-                            let mut c = closed.lock().await;
-                            *c = true;
-                            break;
+                        match msg {
+                            WsMessage::Close(_) => {
+                                let mut c = closed.lock().await;
+                                *c = true;
+                                break;
+                            }
+                            WsMessage::Pong(payload) => {
+                                debug!("Received WebSocket Pong ({} bytes)", payload.len());
+                            }
+                            WsMessage::Ping(payload) => {
+                                debug!("Received WebSocket Ping ({} bytes)", payload.len());
+                            }
+                            _ => {
+                                // Ignore other incoming messages
+                            }
                         }
-                        // Ignore all incoming messages (auth responses, pings, etc.)
                     }
                     Err(e) => {
                         error!("WebSocket error: {}", e);
