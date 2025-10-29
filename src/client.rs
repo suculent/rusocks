@@ -298,13 +298,33 @@ impl LinkSocksClient {
 
         if let Some(sender) = auth_sender {
             let auth_message = AuthMessage::new(self.token.clone(), self.options.reverse);
-            let payload = auth_message
-                .pack()
+            let payload = auth_message.pack()
                 .map_err(|e| format!("Failed to pack auth message: {}", e))?;
             sender
                 .send(WsMessage::Binary(payload))
                 .await
                 .map_err(|e| format!("Failed to send auth message: {}", e))?;
+
+            // Start periodic WebSocket pings (keepalive)
+            let ping_sender = sender.clone();
+            let shutdown = self.shutdown.clone();
+            tokio::spawn(async move {
+                use tokio::time::{interval, Duration};
+                let mut ticker = interval(Duration::from_secs(15));
+                loop {
+                    tokio::select! {
+                        _ = ticker.tick() => {
+                            if ping_sender.send(WsMessage::Ping(Vec::new())).await.is_err() {
+                                // Connection likely closed; stop pinging
+                                break;
+                            }
+                        }
+                        _ = shutdown.notified() => {
+                            break;
+                        }
+                    }
+                }
+            });
         } else {
             return Err("WebSocket sender not initialized".to_string());
         }
