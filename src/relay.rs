@@ -327,23 +327,43 @@ impl Relay {
         });
 
         // Read from WebSocket and send to TCP
-        // Clone channels to avoid borrowing self
+        // Take writer and receiver out of the channel (avoid holding lock across await)
         let channels = self.channels.clone();
-
         tokio::spawn(async move {
-            if let Some(channel_info) = channels.read().await.get(&channel_id) {
-                let mut channel = channel_info.lock().await;
+            // Obtain writer and rx
+            let (mut writer_opt, mut rx_opt) = {
+                let guard = channels.read().await;
+                if let Some(ch) = guard.get(&channel_id) {
+                    let mut ch_lock = ch.lock().await;
+                    let writer = ch_lock.writer.take();
+                    let rx = std::mem::replace(&mut ch_lock.message_queue, mpsc::channel(1).1);
+                    (writer, Some(rx))
+                } else {
+                    (None, None)
+                }
+            };
 
-                while let Some(data) = channel.message_queue.recv().await {
-                    if let Some(writer) = &mut channel.writer {
-                        if let Err(e) = writer.write_all(&data).await {
-                            error!("Failed to write to TCP: {}", e);
-                            break;
-                        }
-                    } else {
-                        error!("TCP stream not available");
-                        break;
-                    }
+            let mut writer = match writer_opt.take() {
+                Some(w) => w,
+                None => {
+                    error!("TCP writer not available");
+                    relay_clone2.disconnect_channel(channel_id).await;
+                    return;
+                }
+            };
+            let mut rx = match rx_opt.take() {
+                Some(r) => r,
+                None => {
+                    error!("Message queue not available");
+                    relay_clone2.disconnect_channel(channel_id).await;
+                    return;
+                }
+            };
+
+            while let Some(data) = rx.recv().await {
+                if let Err(e) = writer.write_all(&data).await {
+                    error!("Failed to write to TCP: {}", e);
+                    break;
                 }
             }
 
