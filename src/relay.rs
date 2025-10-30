@@ -250,7 +250,7 @@ impl Relay {
                 channel.stream = Some(stream);
 
                 // Start data transfer with the new stream
-                self.start_data_transfer(channel_id, transfer_stream, queue_tx)
+                self.start_data_transfer(channel_id, transfer_stream, queue_tx, ws_sender.clone())
                     .await;
 
                 Ok(())
@@ -292,6 +292,7 @@ impl Relay {
         channel_id: Uuid,
         mut stream: TcpStream,
         queue_tx: mpsc::Sender<Vec<u8>>,
+        ws_sender: mpsc::Sender<WsMessage>,
     ) {
         // Clone for async tasks
         let channel_id_clone = channel_id;
@@ -309,11 +310,14 @@ impl Relay {
                         break;
                     }
                     Ok(n) => {
-                        // Send data to WebSocket
+                        // Send data to WebSocket as DataMessage
                         let data = buffer[..n].to_vec();
-                        if let Err(e) = queue_tx.send(data).await {
-                            error!("Failed to send data to queue: {}", e);
-                            break;
+                        let msg = crate::message::DataMessage::new(channel_id_clone, data);
+                        if let Ok(frame) = msg.pack() {
+                            if let Err(e) = ws_sender.send(WsMessage::Binary(frame)).await {
+                                error!("Failed to send data to WS: {}", e);
+                                break;
+                            }
                         }
                     }
                     Err(e) => {

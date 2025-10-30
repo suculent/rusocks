@@ -806,6 +806,24 @@ fn parse_connect_response_message(payload: &[u8]) -> Result<Box<dyn Message>, St
 fn downcast_connect(_m: Box<dyn Message>) -> Result<ConnectMessage, String> { Err("downcast not supported".to_string()) }
 fn downcast_data(_m: Box<dyn Message>) -> Result<DataMessage, String> { Err("downcast not supported".to_string()) }
 
+// Helper to parse ConnectResponse directly from a frame
+pub fn parse_connect_response(frame: &[u8]) -> Result<ConnectResponseMessage, String> {
+    if frame.len() < 2 { return Err("Message too short".to_string()); }
+    if frame[0] != PROTOCOL_VERSION || frame[1] != BINARY_TYPE_CONNECT_RESPONSE { return Err("Not a connect_response".to_string()); }
+    let payload = &frame[2..];
+    if payload.len() < 17 { return Err("Invalid connect response message".to_string()); }
+    let success = byte_to_bool(payload[0]);
+    let channel_id = bytes_to_uuid(&payload[1..17])?;
+    let mut error = None;
+    if !success && payload.len() > 17 {
+        let error_len = payload[17] as usize;
+        if payload.len() >= 18 + error_len {
+            error = Some(String::from_utf8(payload[18..18+error_len].to_vec()).map_err(|e| e.to_string())?);
+        }
+    }
+    Ok(ConnectResponseMessage { channel_id, success, error })
+}
+
 fn parse_data_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
     if payload.len() < 22 {
         return Err("Invalid data message".to_string());
