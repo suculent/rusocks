@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::timeout;
@@ -122,8 +123,8 @@ struct ChannelInfo {
     /// Channel state
     state: ChannelState,
 
-    /// TCP stream
-    stream: Option<TcpStream>,
+    /// TCP write half
+    writer: Option<OwnedWriteHalf>,
 
     /// WebSocket sender
     ws_sender: mpsc::Sender<WsMessage>,
@@ -178,7 +179,7 @@ impl Relay {
         let channel_info = Arc::new(Mutex::new(ChannelInfo {
             _id: channel_id,
             state: ChannelState::Connecting,
-            stream: None,
+            writer: None,
             ws_sender: ws_sender.clone(),
             message_queue: queue_rx,
             message_tx: queue_tx.clone(),
@@ -232,6 +233,9 @@ impl Relay {
             Ok(Ok(stream)) => {
                 // Connection successful
                 let mut channel = channel_info.lock().await;
+                // Split into read and write halves
+                let (reader, writer) = stream.into_split();
+                channel.writer = Some(writer);
                 channel.state = ChannelState::Connected;
 
                 // Send success response
@@ -240,17 +244,9 @@ impl Relay {
                     let _ = ws_sender.send(WsMessage::Binary(binary)).await;
                 }
 
-                // Create a new connection for data transfer
-                let transfer_stream = match TcpStream::connect(addr).await {
-                    Ok(stream) => stream,
-                    Err(e) => return Err(format!("Failed to connect: {}", e)),
-                };
-
-                // Store the original stream in the channel
-                channel.stream = Some(stream);
-
-                // Start data transfer with the new stream
-                self.start_data_transfer(channel_id, transfer_stream, queue_tx, ws_sender.clone())
+                // Start data transfer with the reader half
+                drop(channel); // release lock before spawn
+                self.start_data_transfer(channel_id, reader, ws_sender.clone())
                     .await;
 
                 Ok(())
@@ -290,8 +286,7 @@ impl Relay {
     async fn start_data_transfer(
         &self,
         channel_id: Uuid,
-        mut stream: TcpStream,
-        queue_tx: mpsc::Sender<Vec<u8>>,
+        mut reader: OwnedReadHalf,
         ws_sender: mpsc::Sender<WsMessage>,
     ) {
         // Clone for async tasks
@@ -304,7 +299,7 @@ impl Relay {
             let mut buffer = vec![0u8; relay_clone1.options.buffer_size];
 
             loop {
-                match stream.read(&mut buffer).await {
+                match reader.read(&mut buffer).await {
                     Ok(0) => {
                         // EOF
                         break;
@@ -340,8 +335,8 @@ impl Relay {
                 let mut channel = channel_info.lock().await;
 
                 while let Some(data) = channel.message_queue.recv().await {
-                    if let Some(stream) = &mut channel.stream {
-                        if let Err(e) = stream.write_all(&data).await {
+                    if let Some(writer) = &mut channel.writer {
+                        if let Err(e) = writer.write_all(&data).await {
                             error!("Failed to write to TCP: {}", e);
                             break;
                         }
@@ -368,9 +363,9 @@ impl Relay {
                 let _ = channel.ws_sender.send(WsMessage::Binary(binary)).await;
             }
 
-            // Close TCP stream
-            if let Some(stream) = &mut channel.stream {
-                let _ = stream.shutdown().await;
+            // Close TCP writer
+            if let Some(writer) = &mut channel.writer {
+                let _ = writer.shutdown().await;
             }
 
             // Update state

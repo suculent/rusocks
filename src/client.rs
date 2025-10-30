@@ -1,13 +1,13 @@
 //! Client implementation for rusocks
 
 use crate::message::{AuthMessage, ConnectorMessage, Message};
-use tokio_tungstenite::tungstenite::Message as WsMessage;
 use log::error;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
 /// Default buffer size for data transfer
@@ -298,7 +298,8 @@ impl LinkSocksClient {
 
         if let Some(sender) = auth_sender {
             let auth_message = AuthMessage::new(self.token.clone(), self.options.reverse);
-            let payload = auth_message.pack()
+            let payload = auth_message
+                .pack()
                 .map_err(|e| format!("Failed to pack auth message: {}", e))?;
             sender
                 .send(WsMessage::Binary(payload))
@@ -329,36 +330,40 @@ impl LinkSocksClient {
             if self.options.reverse {
                 let ws_sender_clone = sender.clone();
                 tokio::spawn(async move {
-                    use crate::message::{parse_message, parse_connect_frame, parse_data_frame, parse_disconnect_frame};
+                    use crate::message::{
+                        parse_connect_frame, parse_data_frame, parse_disconnect_frame,
+                        parse_message,
+                    };
                     use log::debug;
                     let relay = crate::relay::Relay::new_default();
                     while let Some(msg) = inbound_rx.recv().await {
                         if let WsMessage::Binary(payload) = msg {
                             match parse_message(&payload) {
-                                Ok(msg) => {
-                                    match msg.message_type() {
-                                        "connect" => {
-                                            if let Ok(connect) = parse_connect_frame(&payload) {
-                                                let _ = relay
-                                                    .handle_network_connection(ws_sender_clone.clone(), connect)
-                                                    .await;
-                                            }
-                                        }
-                                        "data" => {
-                                            if let Ok(data_msg) = parse_data_frame(&payload) {
-                                                let _ = relay.handle_data_message(data_msg).await;
-                                            }
-                                        }
-                                        "disconnect" => {
-                                            if let Ok(ch) = parse_disconnect_frame(&payload) {
-                                                relay.disconnect_channel(ch).await;
-                                            }
-                                        }
-                                        other => {
-                                            debug!("Unsupported inbound message type: {}", other);
+                                Ok(msg) => match msg.message_type() {
+                                    "connect" => {
+                                        if let Ok(connect) = parse_connect_frame(&payload) {
+                                            let _ = relay
+                                                .handle_network_connection(
+                                                    ws_sender_clone.clone(),
+                                                    connect,
+                                                )
+                                                .await;
                                         }
                                     }
-                                }
+                                    "data" => {
+                                        if let Ok(data_msg) = parse_data_frame(&payload) {
+                                            let _ = relay.handle_data_message(data_msg).await;
+                                        }
+                                    }
+                                    "disconnect" => {
+                                        if let Ok(ch) = parse_disconnect_frame(&payload) {
+                                            relay.disconnect_channel(ch).await;
+                                        }
+                                    }
+                                    other => {
+                                        debug!("Unsupported inbound message type: {}", other);
+                                    }
+                                },
                                 Err(e) => {
                                     debug!("Failed to parse inbound message: {}", e);
                                 }

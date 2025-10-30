@@ -136,7 +136,14 @@ impl WSHandler {
 pub async fn connect_to_websocket(
     url: &str,
     user_agent: Option<&str>,
-) -> Result<(WSHandler, mpsc::Sender<WsMessage>, mpsc::Receiver<WsMessage>), String> {
+) -> Result<
+    (
+        WSHandler,
+        mpsc::Sender<WsMessage>,
+        mpsc::Receiver<WsMessage>,
+    ),
+    String,
+> {
     // Parse URL
     let mut url = match Url::parse(url) {
         Ok(url) => url,

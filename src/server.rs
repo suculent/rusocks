@@ -1,6 +1,8 @@
+use crate::message::{
+    parse_connect_response, parse_data_frame, parse_disconnect_frame, parse_message,
+    ConnectMessage, Message,
+};
 use crate::message::{AuthMessage, AuthResponseMessage};
-use crate::message::{parse_message, parse_connect_response, parse_data_frame, parse_disconnect_frame, ConnectMessage, Message};
-use tokio::io::AsyncWriteExt;
 use crate::portpool::PortPool;
 use crate::socket::AsyncSocketManager;
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
@@ -12,12 +14,13 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex, Notify, RwLock};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{accept_async, tungstenite::Message as WsMessage, WebSocketStream};
-use tokio::net::tcp::OwnedWriteHalf;
 use uuid::Uuid;
 
 /// Default buffer size for data transfer
@@ -749,7 +752,6 @@ impl LinkSocksServer {
         let (ws_sender_init, mut ws_receiver) = ws_stream.split();
         let mut ws_sender_opt = Some(ws_sender_init);
         let mut authenticated = false;
-        let mut reverse_token: Option<String> = None;
         // Outbound writer channel after auth
         let mut outbound_tx_opt: Option<mpsc::Sender<WsMessage>> = None;
 
@@ -780,9 +782,9 @@ impl LinkSocksServer {
                                 let _ = tx.send(WsMessage::Pong(payload)).await;
                             } else {
                                 if let Some(s) = ws_sender_opt.as_mut() {
-                                    s.send(WsMessage::Pong(payload))
-                                        .await
-                                        .map_err(|e| format!("Failed to send pong to {}: {}", addr, e))?;
+                                    s.send(WsMessage::Pong(payload)).await.map_err(|e| {
+                                        format!("Failed to send pong to {}: {}", addr, e)
+                                    })?;
                                 }
                             }
                         }
@@ -793,13 +795,16 @@ impl LinkSocksServer {
                             if !authenticated {
                                 match Self::parse_binary_auth(&payload) {
                                     Ok(auth_msg) => match self
-                                        .process_auth_message(ws_sender_opt.as_mut().unwrap(), addr, auth_msg.clone())
+                                        .process_auth_message(
+                                            ws_sender_opt.as_mut().unwrap(),
+                                            addr,
+                                            auth_msg.clone(),
+                                        )
                                         .await
                                     {
-                                    Ok(()) => {
+                                        Ok(()) => {
                                             // Register reverse client if reverse
                                             if auth_msg.reverse {
-                                                reverse_token = Some(auth_msg.token.clone());
                                                 // Create outbound channel and writer task
                                                 let (tx, mut rx) = mpsc::channel::<WsMessage>(200);
                                                 let mut sink = ws_sender_opt.take().unwrap();
@@ -813,11 +818,13 @@ impl LinkSocksServer {
                                                 });
                                                 outbound_tx_opt = Some(tx.clone());
                                                 // Add to token_clients for load balancing
-                                                if let Some(token) = reverse_token.as_ref() {
-                                                    let info = ClientInfo { _id: Uuid::new_v4(), sender: tx };
-                                                    let mut guard = self.token_clients.write().await;
-                                                    guard.entry(token.clone()).or_default().push(info);
-                                                }
+                                                let token = auth_msg.token.clone();
+                                                let info = ClientInfo {
+                                                    _id: Uuid::new_v4(),
+                                                    sender: tx,
+                                                };
+                                                let mut guard = self.token_clients.write().await;
+                                                guard.entry(token).or_default().push(info);
                                             }
                                             authenticated = true;
                                             continue;
@@ -854,16 +861,26 @@ impl LinkSocksServer {
                                                 // Extract channel_id and success
                                                 // Reparse using helper in message module
                                                 if let Ok(resp) = parse_connect_response(&payload) {
-                                                    let mut pending = self.pending_connect.lock().await;
-                                                    if let Some(tx) = pending.remove(&resp.channel_id) {
-                                                        let _ = tx.send(if resp.success { Ok(()) } else { Err(resp.error.unwrap_or_else(|| "connect failed".to_string())) });
+                                                    let mut pending =
+                                                        self.pending_connect.lock().await;
+                                                    if let Some(tx) =
+                                                        pending.remove(&resp.channel_id)
+                                                    {
+                                                        let _ = tx.send(if resp.success {
+                                                            Ok(())
+                                                        } else {
+                                                            Err(resp.error.unwrap_or_else(|| {
+                                                                "connect failed".to_string()
+                                                            }))
+                                                        });
                                                     }
                                                 }
                                             }
                                             "data" => {
-                                                    if let Ok(data) = parse_data_frame(&payload) {
+                                                if let Ok(data) = parse_data_frame(&payload) {
                                                     let map = self.channel_streams.lock().await;
-                                                    if let Some(writer) = map.get(&data.channel_id) {
+                                                    if let Some(writer) = map.get(&data.channel_id)
+                                                    {
                                                         let mut s = writer.lock().await;
                                                         let _ = s.write_all(&data.data).await;
                                                     }
@@ -897,7 +914,11 @@ impl LinkSocksServer {
                                 match serde_json::from_str::<AuthMessage>(&text) {
                                     Ok(auth_msg) => {
                                         match self
-                                            .process_auth_message(ws_sender_opt.as_mut().unwrap(), addr, auth_msg)
+                                            .process_auth_message(
+                                                ws_sender_opt.as_mut().unwrap(),
+                                                addr,
+                                                auth_msg,
+                                            )
                                             .await
                                         {
                                             Ok(()) => {
@@ -1091,41 +1112,79 @@ impl LinkSocksServer {
     }
 
     /// Handle a single SOCKS5 connection (minimal CONNECT support)
-    async fn handle_socks_connection(&self, token: String, mut stream: TcpStream) -> Result<(), String> {
+    async fn handle_socks_connection(
+        &self,
+        token: String,
+        mut stream: TcpStream,
+    ) -> Result<(), String> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         // Method negotiation
         let mut buf = [0u8; 2];
-        stream.read_exact(&mut buf).await.map_err(|e| e.to_string())?;
-        if buf[0] != 0x05 { return Err("Invalid SOCKS version".to_string()); }
+        stream
+            .read_exact(&mut buf)
+            .await
+            .map_err(|e| e.to_string())?;
+        if buf[0] != 0x05 {
+            return Err("Invalid SOCKS version".to_string());
+        }
         let n_methods = buf[1] as usize;
         let mut methods = vec![0u8; n_methods];
-        stream.read_exact(&mut methods).await.map_err(|e| e.to_string())?;
+        stream
+            .read_exact(&mut methods)
+            .await
+            .map_err(|e| e.to_string())?;
         // Reply: no auth
-        stream.write_all(&[0x05, 0x00]).await.map_err(|e| e.to_string())?;
+        stream
+            .write_all(&[0x05, 0x00])
+            .await
+            .map_err(|e| e.to_string())?;
 
         // Request
         let mut hdr = [0u8; 4];
-        stream.read_exact(&mut hdr).await.map_err(|e| e.to_string())?;
-        if hdr[0] != 0x05 || hdr[1] != 0x01 { return Err("Only CONNECT supported".to_string()); }
+        stream
+            .read_exact(&mut hdr)
+            .await
+            .map_err(|e| e.to_string())?;
+        if hdr[0] != 0x05 || hdr[1] != 0x01 {
+            return Err("Only CONNECT supported".to_string());
+        }
         let atyp = hdr[3];
         // Parse address
         let address = match atyp {
-            0x01 => { // IPv4
-                let mut a = [0u8; 4]; stream.read_exact(&mut a).await.map_err(|e| e.to_string())?;
+            0x01 => {
+                // IPv4
+                let mut a = [0u8; 4];
+                stream.read_exact(&mut a).await.map_err(|e| e.to_string())?;
                 std::net::Ipv4Addr::from(a).to_string()
             }
-            0x03 => { // Domain
-                let mut len = [0u8;1]; stream.read_exact(&mut len).await.map_err(|e| e.to_string())?; let l = len[0] as usize;
-                let mut name = vec![0u8; l]; stream.read_exact(&mut name).await.map_err(|e| e.to_string())?;
+            0x03 => {
+                // Domain
+                let mut len = [0u8; 1];
+                stream
+                    .read_exact(&mut len)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let l = len[0] as usize;
+                let mut name = vec![0u8; l];
+                stream
+                    .read_exact(&mut name)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 String::from_utf8(name).map_err(|e| e.to_string())?
             }
-            0x04 => { // IPv6
-                let mut a = [0u8; 16]; stream.read_exact(&mut a).await.map_err(|e| e.to_string())?;
+            0x04 => {
+                // IPv6
+                let mut a = [0u8; 16];
+                stream.read_exact(&mut a).await.map_err(|e| e.to_string())?;
                 std::net::Ipv6Addr::from(a).to_string()
             }
             _ => return Err("Invalid ATYP".to_string()),
         };
-        let mut pbuf = [0u8;2]; stream.read_exact(&mut pbuf).await.map_err(|e| e.to_string())?;
+        let mut pbuf = [0u8; 2];
+        stream
+            .read_exact(&mut pbuf)
+            .await
+            .map_err(|e| e.to_string())?;
         let port = u16::from_be_bytes(pbuf);
 
         // Load-balance pick a reverse client sender
@@ -1134,8 +1193,12 @@ impl LinkSocksServer {
             let idx = idx_guard.entry(token.clone()).or_insert(0);
             let list = self.token_clients.read().await;
             let clients_opt = list.get(&token);
-            let clients: Vec<ClientInfo> = clients_opt.map(|v| v.iter().cloned().collect()).unwrap_or_default();
-            if clients.is_empty() { return Err("No reverse clients available".to_string()); }
+            let clients: Vec<ClientInfo> = clients_opt
+                .map(|v| v.iter().cloned().collect())
+                .unwrap_or_default();
+            if clients.is_empty() {
+                return Err("No reverse clients available".to_string());
+            }
             let chosen = &clients[*idx % clients.len()];
             *idx = (*idx + 1) % clients.len();
             chosen.sender.clone()
@@ -1143,9 +1206,17 @@ impl LinkSocksServer {
 
         // Create channel id and send ConnectMessage
         let channel_id = Uuid::new_v4();
-        let connect = ConnectMessage { protocol: "tcp".to_string(), channel_id, address: address.clone(), port };
+        let connect = ConnectMessage {
+            protocol: "tcp".to_string(),
+            channel_id,
+            address: address.clone(),
+            port,
+        };
         let frame = connect.pack().map_err(|e| e.to_string())?;
-        sender.send(WsMessage::Binary(frame)).await.map_err(|e| e.to_string())?;
+        sender
+            .send(WsMessage::Binary(frame))
+            .await
+            .map_err(|e| e.to_string())?;
 
         // Await ConnectResponse via oneshot
         let (tx, rx) = oneshot::channel();
@@ -1153,18 +1224,19 @@ impl LinkSocksServer {
             let mut pending = self.pending_connect.lock().await;
             pending.insert(channel_id, tx);
         }
-        let ok = tokio::time::timeout(self.options.connect_timeout, rx).await
+        let ok = tokio::time::timeout(self.options.connect_timeout, rx)
+            .await
             .map_err(|_| "Connect response timeout".to_string())?
             .map_err(|_| "Connect response channel closed".to_string())?;
 
         if let Err(err) = ok {
             // Reply failure
-            let mut reply = vec![0x05, 0x01, 0x00, 0x01, 0,0,0,0, 0,0];
+            let reply = vec![0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
             stream.write_all(&reply).await.map_err(|e| e.to_string())?;
             return Err(err);
         }
         // Reply success
-        let mut reply = vec![0x05, 0x00, 0x00, 0x01, 0,0,0,0, 0,0];
+        let reply = vec![0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
         stream.write_all(&reply).await.map_err(|e| e.to_string())?;
 
         // Register stream and start WS<->TCP handling
@@ -1180,17 +1252,30 @@ impl LinkSocksServer {
                 let mut buf = vec![0u8; 8192];
                 loop {
                     match ri.read(&mut buf).await {
-                        Ok(0) => { break; }
+                        Ok(0) => {
+                            break;
+                        }
                         Ok(n) => {
-                            let dm = crate::message::DataMessage::new(channel_id, buf[..n].to_vec());
+                            let dm =
+                                crate::message::DataMessage::new(channel_id, buf[..n].to_vec());
                             if let Ok(f) = dm.pack() {
-                                if sender_clone.send(WsMessage::Binary(f)).await.is_err() { break; }
-                            } else { break; }
+                                if sender_clone.send(WsMessage::Binary(f)).await.is_err() {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
                         }
                         Err(_) => break,
                     }
                 }
-                let _ = sender_clone.send(WsMessage::Binary(crate::message::DisconnectMessage::new(channel_id).pack().unwrap_or_default())).await;
+                let _ = sender_clone
+                    .send(WsMessage::Binary(
+                        crate::message::DisconnectMessage::new(channel_id)
+                            .pack()
+                            .unwrap_or_default(),
+                    ))
+                    .await;
             });
         }
 
