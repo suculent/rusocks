@@ -16,8 +16,11 @@ pub struct WSHandler {
     /// WebSocket stream
     stream: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
 
-    /// Message receiver
+    /// Outbound queue receiver (to WS)
     receiver: mpsc::Receiver<WsMessage>,
+
+    /// Inbound queue sender (from WS)
+    inbound_tx: mpsc::Sender<WsMessage>,
 
     /// Closed flag
     closed: Arc<Mutex<bool>>,
@@ -27,16 +30,19 @@ impl WSHandler {
     /// Create a new WebSocket handler
     pub fn new(
         stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-    ) -> (Self, mpsc::Sender<WsMessage>) {
+    ) -> (Self, mpsc::Sender<WsMessage>, mpsc::Receiver<WsMessage>) {
         let (sender, receiver) = mpsc::channel(100);
+        let (inbound_tx, inbound_rx) = mpsc::channel(100);
 
         (
             WSHandler {
                 stream: Some(stream),
                 receiver,
+                inbound_tx,
                 closed: Arc::new(Mutex::new(false)),
             },
             sender,
+            inbound_rx,
         )
     }
 
@@ -46,8 +52,9 @@ impl WSHandler {
         let stream = self.stream.take().ok_or(WsError::ConnectionClosed)?;
         let (mut ws_sender, mut ws_receiver) = stream.split();
 
-        // Reader task: consume incoming messages but do not forward them to outbound channel
+        // Reader task: forward inbound Binary frames to inbound queue; log Ping/Pong
         let closed = self.closed.clone();
+        let inbound_tx = self.inbound_tx.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = ws_receiver.next().await {
@@ -64,6 +71,9 @@ impl WSHandler {
                             }
                             WsMessage::Ping(payload) => {
                                 debug!("Received WebSocket Ping ({} bytes)", payload.len());
+                            }
+                            WsMessage::Binary(_) => {
+                                let _ = inbound_tx.send(msg).await;
                             }
                             _ => {
                                 // Ignore other incoming messages
@@ -126,12 +136,18 @@ impl WSHandler {
 pub async fn connect_to_websocket(
     url: &str,
     user_agent: Option<&str>,
-) -> Result<(WSHandler, mpsc::Sender<WsMessage>), String> {
+) -> Result<(WSHandler, mpsc::Sender<WsMessage>, mpsc::Receiver<WsMessage>), String> {
     // Parse URL
-    let url = match Url::parse(url) {
+    let mut url = match Url::parse(url) {
         Ok(url) => url,
         Err(e) => return Err(format!("Invalid URL: {}", e)),
     };
+
+    // Default path to /socket if empty or '/'
+    let path = url.path();
+    if path.is_empty() || path == "/" {
+        url.set_path("/socket");
+    }
 
     // Connect to WebSocket server with optional custom User-Agent
     let request = match url.clone().into_client_request() {
@@ -156,7 +172,7 @@ pub async fn connect_to_websocket(
     };
 
     // Create handler using the established WebSocket stream
-    let (handler, sender) = WSHandler::new(ws_stream);
+    let (handler, sender, inbound_rx) = WSHandler::new(ws_stream);
 
-    Ok((handler, sender))
+    Ok((handler, sender, inbound_rx))
 }

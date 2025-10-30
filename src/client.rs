@@ -1,13 +1,13 @@
 //! Client implementation for rusocks
 
 use crate::message::{AuthMessage, ConnectorMessage, Message};
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use log::error;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
-use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
 /// Default buffer size for data transfer
@@ -282,7 +282,7 @@ impl LinkSocksClient {
     async fn run(&self) -> Result<(), String> {
         // Connect to WebSocket server
         let user_agent = self.options.user_agent.as_deref();
-        let (mut handler, sender) =
+        let (mut handler, sender, mut inbound_rx) =
             crate::conn::connect_to_websocket(&self.options.ws_url, user_agent).await?;
         // Store the sender
         let mut ws_sender = self.ws_sender.lock().await;
@@ -315,7 +315,6 @@ impl LinkSocksClient {
                     tokio::select! {
                         _ = ticker.tick() => {
                             if ping_sender.send(WsMessage::Ping(Vec::new())).await.is_err() {
-                                // Connection likely closed; stop pinging
                                 break;
                             }
                         }
@@ -325,6 +324,49 @@ impl LinkSocksClient {
                     }
                 }
             });
+
+            // If reverse mode, process inbound messages and dispatch to relay
+            if self.options.reverse {
+                let ws_sender_clone = sender.clone();
+                tokio::spawn(async move {
+                    use crate::message::{parse_message, parse_connect_frame, parse_data_frame, parse_disconnect_frame};
+                    use log::debug;
+                    let relay = crate::relay::Relay::new_default();
+                    while let Some(msg) = inbound_rx.recv().await {
+                        if let WsMessage::Binary(payload) = msg {
+                            match parse_message(&payload) {
+                                Ok(msg) => {
+                                    match msg.message_type() {
+                                        "connect" => {
+                                            if let Ok(connect) = parse_connect_frame(&payload) {
+                                                let _ = relay
+                                                    .handle_network_connection(ws_sender_clone.clone(), connect)
+                                                    .await;
+                                            }
+                                        }
+                                        "data" => {
+                                            if let Ok(data_msg) = parse_data_frame(&payload) {
+                                                let _ = relay.handle_data_message(data_msg).await;
+                                            }
+                                        }
+                                        "disconnect" => {
+                                            if let Ok(ch) = parse_disconnect_frame(&payload) {
+                                                relay.disconnect_channel(ch).await;
+                                            }
+                                        }
+                                        other => {
+                                            debug!("Unsupported inbound message type: {}", other);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    debug!("Failed to parse inbound message: {}", e);
+                                }
+                            }
+                        }
+                    }
+                });
+            }
         } else {
             return Err("WebSocket sender not initialized".to_string());
         }

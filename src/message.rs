@@ -701,6 +701,47 @@ fn parse_auth_response_message(payload: &[u8]) -> Result<Box<dyn Message>, Strin
     Ok(Box::new(AuthResponseMessage { success, error }))
 }
 
+pub fn parse_connect_frame(frame: &[u8]) -> Result<ConnectMessage, String> {
+    if frame.len() < 2 { return Err("Message too short".to_string()); }
+    if frame[0] != PROTOCOL_VERSION { return Err("Unsupported protocol version".to_string()); }
+    if frame[1] != BINARY_TYPE_CONNECT { return Err("Not a connect frame".to_string()); }
+    if let Ok(boxed) = parse_connect_message(&frame[2..]) { if let Ok(c) = downcast_connect(boxed) { return Ok(c); } }
+    // Fallback direct parse
+    let payload = &frame[2..];
+    if payload.len() < 17 { return Err("Invalid connect message".to_string()); }
+    let protocol = byte_to_protocol(payload[0]).to_string();
+    let channel_id = bytes_to_uuid(&payload[1..17])?;
+    let (address, port) = if protocol == "tcp" { let payload = &payload[17..]; if payload.len()<1 { return Err("Invalid tcp connect message".to_string()); } let addr_len = payload[0] as usize; if payload.len() < 1+addr_len+2 { return Err("Invalid tcp connect message length".to_string()); } let address = String::from_utf8(payload[1..1+addr_len].to_vec()).map_err(|e| format!("Invalid UTF-8 in address: {}", e))?; let port = (payload[1+addr_len] as u16) << 8 | payload[1+addr_len+1] as u16; (address, port)} else { (String::new(), 0)};
+    Ok(ConnectMessage { protocol, channel_id, address, port })
+}
+
+pub fn parse_data_frame(frame: &[u8]) -> Result<DataMessage, String> {
+    if frame.len() < 2 { return Err("Message too short".to_string()); }
+    if frame[0] != PROTOCOL_VERSION { return Err("Unsupported protocol version".to_string()); }
+    if frame[1] != BINARY_TYPE_DATA { return Err("Not a data frame".to_string()); }
+    if let Ok(boxed) = parse_data_message(&frame[2..]) { if let Ok(d) = downcast_data(boxed) { return Ok(d); } }
+    // Fallback direct parse
+    let payload = &frame[2..];
+    if payload.len() < 22 { return Err("Invalid data message".to_string()); }
+    let protocol = byte_to_protocol(payload[0]).to_string();
+    let channel_id = bytes_to_uuid(&payload[1..17])?;
+    let compression = payload[17];
+    let data_len = ((payload[18] as u32) << 24) | ((payload[19] as u32) << 16) | ((payload[20] as u32) << 8) | (payload[21] as u32);
+    if payload.len() < 22 + data_len as usize { return Err("Invalid data message length".to_string()); }
+    let data = payload[22..22+data_len as usize].to_vec();
+    Ok(DataMessage { protocol, channel_id, data, compression })
+}
+
+pub fn parse_disconnect_frame(frame: &[u8]) -> Result<Uuid, String> {
+    if frame.len() < 2 { return Err("Message too short".to_string()); }
+    if frame[0] != PROTOCOL_VERSION { return Err("Unsupported protocol version".to_string()); }
+    if frame[1] != BINARY_TYPE_DISCONNECT { return Err("Not a disconnect frame".to_string()); }
+    let payload = &frame[2..];
+    if payload.len() < 16 { return Err("Invalid disconnect message".to_string()); }
+    let channel_id = bytes_to_uuid(&payload[0..16])?;
+    Ok(channel_id)
+}
+
 fn parse_connect_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
     if payload.len() < 17 {
         return Err("Invalid connect message".to_string());
@@ -761,6 +802,9 @@ fn parse_connect_response_message(payload: &[u8]) -> Result<Box<dyn Message>, St
         error,
     }))
 }
+
+fn downcast_connect(_m: Box<dyn Message>) -> Result<ConnectMessage, String> { Err("downcast not supported".to_string()) }
+fn downcast_data(_m: Box<dyn Message>) -> Result<DataMessage, String> { Err("downcast not supported".to_string()) }
 
 fn parse_data_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
     if payload.len() < 22 {

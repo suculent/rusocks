@@ -128,8 +128,11 @@ struct ChannelInfo {
     /// WebSocket sender
     ws_sender: mpsc::Sender<WsMessage>,
 
-    /// Message queue
+    /// Message queue (WS->TCP)
     message_queue: mpsc::Receiver<Vec<u8>>,
+
+    /// Message sender (WS->TCP)
+    message_tx: mpsc::Sender<Vec<u8>>,
 }
 
 /// Relay handles the relay of data between WebSocket and TCP connections
@@ -178,6 +181,7 @@ impl Relay {
             stream: None,
             ws_sender: ws_sender.clone(),
             message_queue: queue_rx,
+            message_tx: queue_tx.clone(),
         }));
 
         // Store channel info
@@ -187,23 +191,24 @@ impl Relay {
             .insert(channel_id, channel_info.clone());
 
         // Connect to the target
-        let addr = match address.parse::<SocketAddr>() {
+        let addr_str = format!("{}:{}", address, connect_msg.port);
+        let addr = match addr_str.parse::<SocketAddr>() {
             Ok(addr) => addr,
             Err(_) => {
                 // Try to resolve the address
-                match tokio::net::lookup_host(&address).await {
+                match tokio::net::lookup_host(&addr_str).await {
                     Ok(mut addrs) => {
                         if let Some(addr) = addrs.next() {
                             addr
                         } else {
                             let response = ConnectResponseMessage::failure(
                                 channel_id,
-                                format!("Failed to resolve address: {}", address),
+                                format!("Failed to resolve address: {}", addr_str),
                             );
                             if let Ok(binary) = response.pack() {
                                 let _ = ws_sender.send(WsMessage::Binary(binary)).await;
                             }
-                            return Err(format!("Failed to resolve address: {}", address));
+                            return Err(format!("Failed to resolve address: {}", addr_str));
                         }
                     }
                     Err(e) => {
@@ -394,23 +399,10 @@ impl Relay {
             // Check if channel is connected
             match channel.state {
                 ChannelState::Connected => {
-                    // Get data directly (no base64 decoding needed with binary protocol)
-                    let _data = data_msg.data.clone();
-
-                    // Send data to TCP stream
-                    if let Some(_stream) = &channel.stream {
-                        // We can't write to the stream here because it's behind a mutex
-                        // Instead, we send the data to the message queue
-                        // Use a different approach since mpsc::Receiver doesn't have a send method
-                        // This is a placeholder - we need to restructure this part
-                        error!(
-                            "Cannot send data to message_queue - receiver doesn't have send method"
-                        );
-                        if false {
-                            return Err("Failed to send data to queue".to_string());
-                        }
-                    } else {
-                        return Err("TCP stream not available".to_string());
+                    let data = data_msg.data.clone();
+                    // Queue data for TCP writer task
+                    if channel.message_tx.send(data).await.is_err() {
+                        return Err("Failed to enqueue data to TCP writer".to_string());
                     }
                 }
                 _ => {
