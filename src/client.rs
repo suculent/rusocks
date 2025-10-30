@@ -5,8 +5,10 @@ use log::error;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tokio::sync::{mpsc, Mutex, Notify, RwLock};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::{mpsc, oneshot, Mutex, Notify, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
@@ -244,6 +246,12 @@ pub struct LinkSocksClient {
     /// Channels
     channels: Arc<RwLock<HashMap<Uuid, ChannelInfo>>>,
 
+    /// Pending connect (forward mode)
+    pending_connect: Arc<tokio::sync::Mutex<HashMap<Uuid, oneshot::Sender<Result<(), String>>>>>,
+
+    /// Channel to TCP writer mapping (forward mode)
+    channel_streams: Arc<tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<OwnedWriteHalf>>>>>,
+
     /// Ready notification
     ready: Arc<Notify>,
 
@@ -262,6 +270,8 @@ impl LinkSocksClient {
             options,
             ws_sender: Arc::new(Mutex::new(None)),
             channels: Arc::new(RwLock::new(HashMap::new())),
+            pending_connect: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            channel_streams: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             ready: Arc::new(Notify::new()),
             shutdown: Arc::new(Notify::new()),
             socks_listener: Arc::new(Mutex::new(None)),
@@ -298,8 +308,7 @@ impl LinkSocksClient {
 
         if let Some(sender) = auth_sender {
             let auth_message = AuthMessage::new(self.token.clone(), self.options.reverse);
-            let payload = auth_message
-                .pack()
+            let payload = auth_message.pack()
                 .map_err(|e| format!("Failed to pack auth message: {}", e))?;
             sender
                 .send(WsMessage::Binary(payload))
@@ -326,49 +335,79 @@ impl LinkSocksClient {
                 }
             });
 
-            // If reverse mode, process inbound messages and dispatch to relay
-            if self.options.reverse {
-                let ws_sender_clone = sender.clone();
+            // Inbound dispatcher (both modes)
+            let pending = self.pending_connect.clone();
+            let writers = self.channel_streams.clone();
+            tokio::spawn(async move {
+                use crate::message::{parse_message, parse_connect_response, parse_data_frame, parse_disconnect_frame};
+                use log::debug;
+                while let Some(msg) = inbound_rx.recv().await {
+                    if let WsMessage::Binary(payload) = msg {
+                        match parse_message(&payload) {
+                            Ok(m) => match m.message_type() {
+                                "connect_response" => {
+                                    if let Ok(resp) = parse_connect_response(&payload) {
+                                        let mut map = pending.lock().await;
+                                        if let Some(tx) = map.remove(&resp.channel_id) {
+                                            let _ = tx.send(if resp.success { Ok(()) } else { Err(resp.error.unwrap_or_else(|| "connect failed".to_string())) });
+                                        }
+                                    }
+                                }
+                                "data" => {
+                                    if let Ok(dm) = parse_data_frame(&payload) {
+                                        let map = writers.lock().await;
+                                        if let Some(w) = map.get(&dm.channel_id) {
+                                            let mut wh = w.lock().await;
+                                            let _ = wh.write_all(&dm.data).await;
+                                        }
+                                    }
+                                }
+                                "disconnect" => {
+                                    if let Ok(ch) = parse_disconnect_frame(&payload) {
+                                        let mut map = writers.lock().await;
+                                        map.remove(&ch);
+                                    }
+                                }
+                                other => debug!("Unsupported inbound type: {}", other),
+                            },
+                            Err(e) => debug!("Failed to parse inbound message: {}", e),
+                        }
+                    }
+                }
+            });
+
+            // If forward mode, start local SOCKS5 server
+            if !self.options.reverse {
+                let ws_tx = sender.clone();
+                let socks_host = self.options.socks_host.clone();
+                let socks_port = self.options.socks_port;
+                let pending = self.pending_connect.clone();
+                let writers = self.channel_streams.clone();
                 tokio::spawn(async move {
-                    use crate::message::{
-                        parse_connect_frame, parse_data_frame, parse_disconnect_frame,
-                        parse_message,
-                    };
-                    use log::debug;
-                    let relay = crate::relay::Relay::new_default();
-                    while let Some(msg) = inbound_rx.recv().await {
-                        if let WsMessage::Binary(payload) = msg {
-                            match parse_message(&payload) {
-                                Ok(msg) => match msg.message_type() {
-                                    "connect" => {
-                                        if let Ok(connect) = parse_connect_frame(&payload) {
-                                            let _ = relay
-                                                .handle_network_connection(
-                                                    ws_sender_clone.clone(),
-                                                    connect,
-                                                )
-                                                .await;
-                                        }
+                    let addr = format!("{}:{}", socks_host, socks_port);
+                    match TcpListener::bind(&addr).await {
+                        Ok(listener) => {
+                            log::info!("SOCKS5 server listening on {}", addr);
+                            loop {
+                                match listener.accept().await {
+                                    Ok((stream, peer)) => {
+                                        let ws_tx = ws_tx.clone();
+                                        let pending = pending.clone();
+                                        let writers = writers.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = handle_socks_conn(ws_tx, pending, writers, stream).await {
+                                                log::warn!("SOCKS connection error from {}: {}", peer, e);
+                                            }
+                                        });
                                     }
-                                    "data" => {
-                                        if let Ok(data_msg) = parse_data_frame(&payload) {
-                                            let _ = relay.handle_data_message(data_msg).await;
-                                        }
+                                    Err(e) => {
+                                        log::warn!("SOCKS accept error: {}", e);
+                                        break;
                                     }
-                                    "disconnect" => {
-                                        if let Ok(ch) = parse_disconnect_frame(&payload) {
-                                            relay.disconnect_channel(ch).await;
-                                        }
-                                    }
-                                    other => {
-                                        debug!("Unsupported inbound message type: {}", other);
-                                    }
-                                },
-                                Err(e) => {
-                                    debug!("Failed to parse inbound message: {}", e);
                                 }
                             }
                         }
+                        Err(e) => log::error!("Failed to bind SOCKS5 server on {}: {}", addr, e),
                     }
                 });
             }
@@ -426,6 +465,78 @@ impl LinkSocksClient {
     }
 }
 
+async fn handle_socks_conn(
+    ws_tx: mpsc::Sender<WsMessage>,
+    pending: Arc<tokio::sync::Mutex<HashMap<Uuid, oneshot::Sender<Result<(), String>>>>>,
+    writers: Arc<tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<OwnedWriteHalf>>>>>,
+    mut stream: TcpStream,
+) -> Result<(), String> {
+    // Method negotiation
+    let mut hdr = [0u8;2];
+    stream.read_exact(&mut hdr).await.map_err(|e| e.to_string())?;
+    if hdr[0] != 0x05 { return Err("Invalid SOCKS version".to_string()); }
+    let n = hdr[1] as usize;
+    let mut methods = vec![0u8; n];
+    stream.read_exact(&mut methods).await.map_err(|e| e.to_string())?;
+    stream.write_all(&[0x05,0x00]).await.map_err(|e| e.to_string())?;
+
+    // Request
+    let mut req = [0u8;4];
+    stream.read_exact(&mut req).await.map_err(|e| e.to_string())?;
+    if req[0] != 0x05 || req[1] != 0x01 { return Err("Only CONNECT supported".to_string()); }
+    let atyp = req[3];
+    let address = match atyp {
+        0x01 => { let mut a=[0u8;4]; stream.read_exact(&mut a).await.map_err(|e| e.to_string())?; std::net::Ipv4Addr::from(a).to_string() }
+        0x03 => { let mut l=[0u8;1]; stream.read_exact(&mut l).await.map_err(|e| e.to_string())?; let sz=l[0] as usize; let mut name=vec![0u8;sz]; stream.read_exact(&mut name).await.map_err(|e| e.to_string())?; String::from_utf8(name).map_err(|e| e.to_string())? }
+        0x04 => { let mut a=[0u8;16]; stream.read_exact(&mut a).await.map_err(|e| e.to_string())?; std::net::Ipv6Addr::from(a).to_string() }
+        _ => return Err("Invalid ATYP".to_string()),
+    };
+    let mut p=[0u8;2]; stream.read_exact(&mut p).await.map_err(|e| e.to_string())?;
+    let port = u16::from_be_bytes(p);
+
+    // Create channel and send Connect
+    let channel_id = Uuid::new_v4();
+    let connect = crate::message::ConnectMessage { protocol: "tcp".to_string(), channel_id, address: address.clone(), port };
+    let frame = connect.pack().map_err(|e| e.to_string())?;
+    ws_tx.send(WsMessage::Binary(frame)).await.map_err(|e| e.to_string())?;
+
+    let (tx, rx) = oneshot::channel();
+    {
+        let mut map = pending.lock().await;
+        map.insert(channel_id, tx);
+    }
+    tokio::time::timeout(Duration::from_secs(10), rx).await.map_err(|_| "Connect response timeout".to_string())?.map_err(|_| "Connect response channel closed".to_string())??;
+
+    // Reply success to SOCKS client
+    let reply = [0x05,0x00,0x00,0x01, 0,0,0,0, 0,0];
+    stream.write_all(&reply).await.map_err(|e| e.to_string())?;
+
+    // Split and register writer
+    let (mut ri, wi) = stream.into_split();
+    {
+        let mut map = writers.lock().await;
+        map.insert(channel_id, Arc::new(tokio::sync::Mutex::new(wi)));
+    }
+
+    // TCP->WS forward
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; 8192];
+        loop {
+            match ri.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let dm = crate::message::DataMessage::new(channel_id, buf[..n].to_vec());
+                    if let Ok(f) = dm.pack() { if ws_tx.send(WsMessage::Binary(f)).await.is_err() { break; } } else { break; }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = ws_tx.send(WsMessage::Binary(crate::message::DisconnectMessage::new(channel_id).pack().unwrap_or_default())).await;
+    });
+
+    Ok(())
+}
+
 impl Clone for LinkSocksClient {
     fn clone(&self) -> Self {
         LinkSocksClient {
@@ -433,6 +544,8 @@ impl Clone for LinkSocksClient {
             options: self.options.clone(),
             ws_sender: self.ws_sender.clone(),
             channels: self.channels.clone(),
+            pending_connect: self.pending_connect.clone(),
+            channel_streams: self.channel_streams.clone(),
             ready: self.ready.clone(),
             shutdown: self.shutdown.clone(),
             socks_listener: self.socks_listener.clone(),
