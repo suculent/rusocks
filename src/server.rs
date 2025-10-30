@@ -749,6 +749,9 @@ impl LinkSocksServer {
 
         debug!("WebSocket handshake completed for {}", addr);
 
+        // Relay for forward mode (server-side network dialer)
+        let relay = crate::relay::Relay::new_default();
+
         let (ws_sender_init, mut ws_receiver) = ws_stream.split();
         let mut ws_sender_opt = Some(ws_sender_init);
         let mut authenticated = false;
@@ -802,27 +805,24 @@ impl LinkSocksServer {
                                         )
                                         .await
                                     {
-                                        Ok(()) => {
-                                            // Register reverse client if reverse
-                                            if auth_msg.reverse {
-                                                // Create outbound channel and writer task
-                                                let (tx, mut rx) = mpsc::channel::<WsMessage>(200);
-                                                let mut sink = ws_sender_opt.take().unwrap();
-                                                tokio::spawn(async move {
-                                                    while let Some(msg) = rx.recv().await {
-                                                        if let Err(e) = sink.send(msg).await {
-                                                            warn!("WS writer error: {}", e);
-                                                            break;
-                                                        }
+                                    Ok(()) => {
+                                            // Create outbound channel and writer task for this WS connection
+                                            let (tx, mut rx) = mpsc::channel::<WsMessage>(200);
+                                            let mut sink = ws_sender_opt.take().unwrap();
+                                            tokio::spawn(async move {
+                                                while let Some(msg) = rx.recv().await {
+                                                    if let Err(e) = sink.send(msg).await {
+                                                        warn!("WS writer error: {}", e);
+                                                        break;
                                                     }
-                                                });
-                                                outbound_tx_opt = Some(tx.clone());
-                                                // Add to token_clients for load balancing
+                                                }
+                                            });
+                                            outbound_tx_opt = Some(tx.clone());
+
+                                            // If reverse client, register for load balancing
+                                            if auth_msg.reverse {
                                                 let token = auth_msg.token.clone();
-                                                let info = ClientInfo {
-                                                    _id: Uuid::new_v4(),
-                                                    sender: tx,
-                                                };
+                                                let info = ClientInfo { _id: Uuid::new_v4(), sender: tx };
                                                 let mut guard = self.token_clients.write().await;
                                                 guard.entry(token).or_default().push(info);
                                             }
@@ -853,11 +853,19 @@ impl LinkSocksServer {
                                     }
                                 }
                             } else {
-                                // Dispatch inbound messages from authenticated reverse client
+                                // Dispatch inbound messages from authenticated client
                                 match parse_message(&payload) {
                                     Ok(msg) => {
                                         match msg.message_type() {
-                                            "connect_response" => {
+                                            "connect" => {
+                                                // Forward mode: server dials out
+                                                if let Ok(conn) = crate::message::parse_connect_frame(&payload) {
+                                                    if let Some(tx) = outbound_tx_opt.as_ref() {
+                                                        let _ = relay.handle_network_connection(tx.clone(), conn).await;
+                                                    }
+                                                }
+                                            }
+                                            ,"connect_response" => {
                                                 // Extract channel_id and success
                                                 // Reparse using helper in message module
                                                 if let Ok(resp) = parse_connect_response(&payload) {
