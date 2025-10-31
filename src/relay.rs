@@ -3,7 +3,7 @@
 use crate::message::{
     ConnectMessage, ConnectResponseMessage, DataMessage, DisconnectMessage, Message,
 };
-use log::error;
+use log::{debug, error};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -193,24 +193,28 @@ impl Relay {
 
         // Connect to the target
         let addr_str = format!("{}:{}", address, connect_msg.port);
+        debug!("Dialing {} (channel={})", addr_str, channel_id);
         let addr = match addr_str.parse::<SocketAddr>() {
             Ok(addr) => addr,
             Err(_) => {
                 // Try to resolve the address
                 match tokio::net::lookup_host(&addr_str).await {
                     Ok(mut addrs) => {
-                        if let Some(addr) = addrs.next() {
-                            addr
-                        } else {
-                            let response = ConnectResponseMessage::failure(
-                                channel_id,
-                                format!("Failed to resolve address: {}", addr_str),
-                            );
-                            if let Ok(binary) = response.pack() {
-                                let _ = ws_sender.send(WsMessage::Binary(binary)).await;
+                        let mut first_v6: Option<SocketAddr> = None;
+                        let mut chosen: Option<SocketAddr> = None;
+                        while let Some(a) = addrs.next() {
+                            if a.is_ipv4() {
+                                chosen = Some(a);
+                                break;
+                            } else if first_v6.is_none() {
+                                first_v6 = Some(a);
                             }
-                            return Err(format!("Failed to resolve address: {}", addr_str));
                         }
+                        let addr = chosen
+                            .or(first_v6)
+                            .ok_or_else(|| format!("Failed to resolve address: {}", addr_str))?;
+                        debug!("Resolved {} -> {} (channel={})", addr_str, addr, channel_id);
+                        addr
                     }
                     Err(e) => {
                         let response = ConnectResponseMessage::failure(
@@ -232,6 +236,7 @@ impl Relay {
         match connect_result {
             Ok(Ok(stream)) => {
                 // Connection successful
+                debug!("Connected {} (channel={})", addr, channel_id);
                 let mut channel = channel_info.lock().await;
                 // Split into read and write halves
                 let (reader, writer) = stream.into_split();
@@ -253,6 +258,7 @@ impl Relay {
             }
             Ok(Err(e)) => {
                 // Connection failed
+                debug!("Connect error (channel={}): {}", channel_id, e);
                 let response = ConnectResponseMessage::failure(
                     channel_id,
                     format!("Connection failed: {}", e),
@@ -268,6 +274,7 @@ impl Relay {
             }
             Err(_) => {
                 // Connection timeout
+                debug!("Connect timeout (channel={})", channel_id);
                 let response =
                     ConnectResponseMessage::failure(channel_id, "Connection timeout".to_string());
                 if let Ok(binary) = response.pack() {
@@ -302,10 +309,12 @@ impl Relay {
                 match reader.read(&mut buffer).await {
                     Ok(0) => {
                         // EOF
+                        debug!("TCP EOF (channel={})", channel_id_clone);
                         break;
                     }
                     Ok(n) => {
                         // Send data to WebSocket as DataMessage
+                        debug!("TCP->WS {} bytes (channel={})", n, channel_id_clone);
                         let data = buffer[..n].to_vec();
                         let msg = crate::message::DataMessage::new(channel_id_clone, data);
                         if let Ok(frame) = msg.pack() {
@@ -361,6 +370,7 @@ impl Relay {
             };
 
             while let Some(data) = rx.recv().await {
+                debug!("WS->TCP {} bytes (channel={})", data.len(), channel_id);
                 if let Err(e) = writer.write_all(&data).await {
                     error!("Failed to write to TCP: {}", e);
                     break;
@@ -378,6 +388,7 @@ impl Relay {
             let mut channel = channel_info.lock().await;
 
             // Send disconnect message
+            debug!("Disconnect channel {}", channel_id);
             let disconnect_msg = DisconnectMessage::new(channel_id);
             if let Ok(binary) = disconnect_msg.pack() {
                 let _ = channel.ws_sender.send(WsMessage::Binary(binary)).await;
@@ -402,6 +413,11 @@ impl Relay {
         let channel_id = data_msg.channel_id;
 
         // Check if channel exists
+        debug!(
+            "Enqueue WS->TCP {} bytes (channel={})",
+            data_msg.data.len(),
+            channel_id
+        );
         if let Some(channel_info) = self.channels.read().await.get(&channel_id) {
             let channel = channel_info.lock().await;
 

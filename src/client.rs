@@ -5,9 +5,9 @@ use log::error;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, Mutex, Notify, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;
@@ -250,7 +250,8 @@ pub struct LinkSocksClient {
     pending_connect: Arc<tokio::sync::Mutex<HashMap<Uuid, oneshot::Sender<Result<(), String>>>>>,
 
     /// Channel to TCP writer mapping (forward mode)
-    channel_streams: Arc<tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<OwnedWriteHalf>>>>>,
+    channel_streams:
+        Arc<tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<OwnedWriteHalf>>>>>,
 
     /// Ready notification
     ready: Arc<Notify>,
@@ -308,7 +309,8 @@ impl LinkSocksClient {
 
         if let Some(sender) = auth_sender {
             let auth_message = AuthMessage::new(self.token.clone(), self.options.reverse);
-            let payload = auth_message.pack()
+            let payload = auth_message
+                .pack()
                 .map_err(|e| format!("Failed to pack auth message: {}", e))?;
             sender
                 .send(WsMessage::Binary(payload))
@@ -339,7 +341,9 @@ impl LinkSocksClient {
             let pending = self.pending_connect.clone();
             let writers = self.channel_streams.clone();
             tokio::spawn(async move {
-                use crate::message::{parse_message, parse_connect_response, parse_data_frame, parse_disconnect_frame};
+                use crate::message::{
+                    parse_connect_response, parse_data_frame, parse_disconnect_frame, parse_message,
+                };
                 use log::debug;
                 while let Some(msg) = inbound_rx.recv().await {
                     if let WsMessage::Binary(payload) = msg {
@@ -347,14 +351,29 @@ impl LinkSocksClient {
                             Ok(m) => match m.message_type() {
                                 "connect_response" => {
                                     if let Ok(resp) = parse_connect_response(&payload) {
+                                        log::debug!(
+                                            "Inbound connect_response: channel={} success={} err={:?}",
+                                            resp.channel_id, resp.success, resp.error
+                                        );
                                         let mut map = pending.lock().await;
                                         if let Some(tx) = map.remove(&resp.channel_id) {
-                                            let _ = tx.send(if resp.success { Ok(()) } else { Err(resp.error.unwrap_or_else(|| "connect failed".to_string())) });
+                                            let _ = tx.send(if resp.success {
+                                                Ok(())
+                                            } else {
+                                                Err(resp.error.unwrap_or_else(|| {
+                                                    "connect failed".to_string()
+                                                }))
+                                            });
                                         }
                                     }
                                 }
                                 "data" => {
                                     if let Ok(dm) = parse_data_frame(&payload) {
+                                        log::debug!(
+                                            "WS->TCP data: channel={} bytes={}",
+                                            dm.channel_id,
+                                            dm.data.len()
+                                        );
                                         let map = writers.lock().await;
                                         if let Some(w) = map.get(&dm.channel_id) {
                                             let mut wh = w.lock().await;
@@ -364,6 +383,7 @@ impl LinkSocksClient {
                                 }
                                 "disconnect" => {
                                     if let Ok(ch) = parse_disconnect_frame(&payload) {
+                                        log::debug!("WS disconnect for channel {}", ch);
                                         let mut map = writers.lock().await;
                                         map.remove(&ch);
                                     }
@@ -391,12 +411,20 @@ impl LinkSocksClient {
                             loop {
                                 match listener.accept().await {
                                     Ok((stream, peer)) => {
+                                        log::debug!("SOCKS accepted from {}", peer);
                                         let ws_tx = ws_tx.clone();
                                         let pending = pending.clone();
                                         let writers = writers.clone();
                                         tokio::spawn(async move {
-                                            if let Err(e) = handle_socks_conn(ws_tx, pending, writers, stream).await {
-                                                log::warn!("SOCKS connection error from {}: {}", peer, e);
+                                            if let Err(e) =
+                                                handle_socks_conn(ws_tx, pending, writers, stream)
+                                                    .await
+                                            {
+                                                log::warn!(
+                                                    "SOCKS connection error from {}: {}",
+                                                    peer,
+                                                    e
+                                                );
                                             }
                                         });
                                     }
@@ -472,43 +500,97 @@ async fn handle_socks_conn(
     mut stream: TcpStream,
 ) -> Result<(), String> {
     // Method negotiation
-    let mut hdr = [0u8;2];
-    stream.read_exact(&mut hdr).await.map_err(|e| e.to_string())?;
-    if hdr[0] != 0x05 { return Err("Invalid SOCKS version".to_string()); }
+    let mut hdr = [0u8; 2];
+    stream
+        .read_exact(&mut hdr)
+        .await
+        .map_err(|e| e.to_string())?;
+    if hdr[0] != 0x05 {
+        return Err("Invalid SOCKS version".to_string());
+    }
     let n = hdr[1] as usize;
     let mut methods = vec![0u8; n];
-    stream.read_exact(&mut methods).await.map_err(|e| e.to_string())?;
-    stream.write_all(&[0x05,0x00]).await.map_err(|e| e.to_string())?;
+    stream
+        .read_exact(&mut methods)
+        .await
+        .map_err(|e| e.to_string())?;
+    stream
+        .write_all(&[0x05, 0x00])
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Request
-    let mut req = [0u8;4];
-    stream.read_exact(&mut req).await.map_err(|e| e.to_string())?;
-    if req[0] != 0x05 || req[1] != 0x01 { return Err("Only CONNECT supported".to_string()); }
+    let mut req = [0u8; 4];
+    stream
+        .read_exact(&mut req)
+        .await
+        .map_err(|e| e.to_string())?;
+    if req[0] != 0x05 || req[1] != 0x01 {
+        return Err("Only CONNECT supported".to_string());
+    }
     let atyp = req[3];
     let address = match atyp {
-        0x01 => { let mut a=[0u8;4]; stream.read_exact(&mut a).await.map_err(|e| e.to_string())?; std::net::Ipv4Addr::from(a).to_string() }
-        0x03 => { let mut l=[0u8;1]; stream.read_exact(&mut l).await.map_err(|e| e.to_string())?; let sz=l[0] as usize; let mut name=vec![0u8;sz]; stream.read_exact(&mut name).await.map_err(|e| e.to_string())?; String::from_utf8(name).map_err(|e| e.to_string())? }
-        0x04 => { let mut a=[0u8;16]; stream.read_exact(&mut a).await.map_err(|e| e.to_string())?; std::net::Ipv6Addr::from(a).to_string() }
+        0x01 => {
+            let mut a = [0u8; 4];
+            stream.read_exact(&mut a).await.map_err(|e| e.to_string())?;
+            std::net::Ipv4Addr::from(a).to_string()
+        }
+        0x03 => {
+            let mut l = [0u8; 1];
+            stream.read_exact(&mut l).await.map_err(|e| e.to_string())?;
+            let sz = l[0] as usize;
+            let mut name = vec![0u8; sz];
+            stream
+                .read_exact(&mut name)
+                .await
+                .map_err(|e| e.to_string())?;
+            String::from_utf8(name).map_err(|e| e.to_string())?
+        }
+        0x04 => {
+            let mut a = [0u8; 16];
+            stream.read_exact(&mut a).await.map_err(|e| e.to_string())?;
+            std::net::Ipv6Addr::from(a).to_string()
+        }
         _ => return Err("Invalid ATYP".to_string()),
     };
-    let mut p=[0u8;2]; stream.read_exact(&mut p).await.map_err(|e| e.to_string())?;
+    let mut p = [0u8; 2];
+    stream.read_exact(&mut p).await.map_err(|e| e.to_string())?;
     let port = u16::from_be_bytes(p);
+
+    log::debug!("SOCKS connect request target {}:{}", address, port);
 
     // Create channel and send Connect
     let channel_id = Uuid::new_v4();
-    let connect = crate::message::ConnectMessage { protocol: "tcp".to_string(), channel_id, address: address.clone(), port };
+    log::debug!("Allocating channel {} for {}:{}", channel_id, address, port);
+    let connect = crate::message::ConnectMessage {
+        protocol: "tcp".to_string(),
+        channel_id,
+        address: address.clone(),
+        port,
+    };
     let frame = connect.pack().map_err(|e| e.to_string())?;
-    ws_tx.send(WsMessage::Binary(frame)).await.map_err(|e| e.to_string())?;
+    ws_tx
+        .send(WsMessage::Binary(frame))
+        .await
+        .map_err(|e| e.to_string())?;
+    log::debug!("Sent connect frame for channel {}", channel_id);
 
     let (tx, rx) = oneshot::channel();
     {
         let mut map = pending.lock().await;
         map.insert(channel_id, tx);
     }
-    tokio::time::timeout(Duration::from_secs(10), rx).await.map_err(|_| "Connect response timeout".to_string())?.map_err(|_| "Connect response channel closed".to_string())??;
+    tokio::time::timeout(Duration::from_secs(10), rx)
+        .await
+        .map_err(|_| "Connect response timeout".to_string())?
+        .map_err(|_| "Connect response channel closed".to_string())??;
+    log::debug!(
+        "Received connect_response success for channel {}",
+        channel_id
+    );
 
     // Reply success to SOCKS client
-    let reply = [0x05,0x00,0x00,0x01, 0,0,0,0, 0,0];
+    let reply = [0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
     stream.write_all(&reply).await.map_err(|e| e.to_string())?;
 
     // Split and register writer
@@ -517,21 +599,43 @@ async fn handle_socks_conn(
         let mut map = writers.lock().await;
         map.insert(channel_id, Arc::new(tokio::sync::Mutex::new(wi)));
     }
+    log::debug!("Registered TCP writer for channel {}", channel_id);
 
     // TCP->WS forward
     tokio::spawn(async move {
+        log::debug!("TCP->WS forward loop started for channel {}", channel_id);
         let mut buf = vec![0u8; 8192];
         loop {
             match ri.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    let dm = crate::message::DataMessage::new(channel_id, buf[..n].to_vec());
-                    if let Ok(f) = dm.pack() { if ws_tx.send(WsMessage::Binary(f)).await.is_err() { break; } } else { break; }
+                Ok(0) => {
+                    log::debug!("TCP EOF on channel {}", channel_id);
+                    break;
                 }
-                Err(_) => break,
+                Ok(n) => {
+                    log::debug!("TCP->WS {} bytes on channel {}", n, channel_id);
+                    let dm = crate::message::DataMessage::new(channel_id, buf[..n].to_vec());
+                    if let Ok(f) = dm.pack() {
+                        if ws_tx.send(WsMessage::Binary(f)).await.is_err() {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    log::debug!("TCP read error on channel {}: {}", channel_id, e);
+                    break;
+                }
             }
         }
-        let _ = ws_tx.send(WsMessage::Binary(crate::message::DisconnectMessage::new(channel_id).pack().unwrap_or_default())).await;
+        let _ = ws_tx
+            .send(WsMessage::Binary(
+                crate::message::DisconnectMessage::new(channel_id)
+                    .pack()
+                    .unwrap_or_default(),
+            ))
+            .await;
+        log::debug!("Sent WS disconnect for channel {}", channel_id);
     });
 
     Ok(())

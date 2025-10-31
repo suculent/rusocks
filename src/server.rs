@@ -755,6 +755,8 @@ impl LinkSocksServer {
         let (ws_sender_init, mut ws_receiver) = ws_stream.split();
         let mut ws_sender_opt = Some(ws_sender_init);
         let mut authenticated = false;
+        // Track if this client is reverse-mode
+        let mut client_is_reverse = false;
         // Outbound writer channel after auth
         let mut outbound_tx_opt: Option<mpsc::Sender<WsMessage>> = None;
 
@@ -805,7 +807,9 @@ impl LinkSocksServer {
                                         )
                                         .await
                                     {
-                                    Ok(()) => {
+                                        Ok(()) => {
+                                            // Record client mode
+                                            client_is_reverse = auth_msg.reverse;
                                             // Create outbound channel and writer task for this WS connection
                                             let (tx, mut rx) = mpsc::channel::<WsMessage>(200);
                                             let mut sink = ws_sender_opt.take().unwrap();
@@ -822,7 +826,10 @@ impl LinkSocksServer {
                                             // If reverse client, register for load balancing
                                             if auth_msg.reverse {
                                                 let token = auth_msg.token.clone();
-                                                let info = ClientInfo { _id: Uuid::new_v4(), sender: tx };
+                                                let info = ClientInfo {
+                                                    _id: Uuid::new_v4(),
+                                                    sender: tx,
+                                                };
                                                 let mut guard = self.token_clients.write().await;
                                                 guard.entry(token).or_default().push(info);
                                             }
@@ -859,13 +866,22 @@ impl LinkSocksServer {
                                         match msg.message_type() {
                                             "connect" => {
                                                 // Forward mode: server dials out
-                                                if let Ok(conn) = crate::message::parse_connect_frame(&payload) {
+                                                if let Ok(conn) =
+                                                    crate::message::parse_connect_frame(&payload)
+                                                {
+                                                    debug!(
+                                                        "Forward connect: channel={} target={}:{}",
+                                                        conn.channel_id, conn.address, conn.port
+                                                    );
                                                     if let Some(tx) = outbound_tx_opt.as_ref() {
-                                                        let _ = relay.handle_network_connection(tx.clone(), conn).await;
+                                                        match relay.handle_network_connection(tx.clone(), conn.clone()).await {
+                                                            Ok(_) => debug!("Connect initiated: channel={}", conn.channel_id),
+                                                            Err(e) => warn!("Connect initiation failed: channel={} err={}", conn.channel_id, e),
+                                                        }
                                                     }
                                                 }
                                             }
-                                            ,"connect_response" => {
+                                            "connect_response" => {
                                                 // Extract channel_id and success
                                                 // Reparse using helper in message module
                                                 if let Ok(resp) = parse_connect_response(&payload) {
@@ -886,18 +902,36 @@ impl LinkSocksServer {
                                             }
                                             "data" => {
                                                 if let Ok(data) = parse_data_frame(&payload) {
-                                                    let map = self.channel_streams.lock().await;
-                                                    if let Some(writer) = map.get(&data.channel_id)
-                                                    {
-                                                        let mut s = writer.lock().await;
-                                                        let _ = s.write_all(&data.data).await;
+                                                    debug!(
+                                                        "WS->TCP data: channel={} bytes={}",
+                                                        data.channel_id,
+                                                        data.data.len()
+                                                    );
+                                                    if client_is_reverse {
+                                                        let map = self.channel_streams.lock().await;
+                                                        if let Some(writer) =
+                                                            map.get(&data.channel_id)
+                                                        {
+                                                            let mut s = writer.lock().await;
+                                                            let _ = s.write_all(&data.data).await;
+                                                        }
+                                                    } else {
+                                                        // Forward mode: enqueue into relay for TCP write
+                                                        let _ =
+                                                            relay.handle_data_message(data).await;
                                                     }
                                                 }
                                             }
                                             "disconnect" => {
                                                 if let Ok(ch) = parse_disconnect_frame(&payload) {
-                                                    let mut map = self.channel_streams.lock().await;
-                                                    map.remove(&ch);
+                                                    debug!("WS disconnect for channel {}", ch);
+                                                    if client_is_reverse {
+                                                        let mut map =
+                                                            self.channel_streams.lock().await;
+                                                        map.remove(&ch);
+                                                    } else {
+                                                        relay.disconnect_channel(ch).await;
+                                                    }
                                                 }
                                             }
                                             _ => {}
