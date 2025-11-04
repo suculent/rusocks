@@ -371,10 +371,10 @@ pub struct LinkSocksServer {
 
     /// Pending connect responses per channel
     pending_connect: PendingConnect,
- 
+
     /// Channel to TCP stream mapping for data relay
     channel_streams: ChannelWriters,
- 
+
     /// Waiting sockets
     waiting_sockets: Arc<RwLock<HashMap<u16, WaitingSocket>>>,
 
@@ -891,11 +891,8 @@ impl LinkSocksServer {
                                             // Extract channel_id and success
                                             // Reparse using helper in message module
                                             if let Ok(resp) = parse_connect_response(&payload) {
-                                                let mut pending =
-                                                    self.pending_connect.lock().await;
-                                                if let Some(tx) =
-                                                    pending.remove(&resp.channel_id)
-                                                {
+                                                let mut pending = self.pending_connect.lock().await;
+                                                if let Some(tx) = pending.remove(&resp.channel_id) {
                                                     let _ = tx.send(if resp.success {
                                                         Ok(())
                                                     } else {
@@ -915,16 +912,14 @@ impl LinkSocksServer {
                                                 );
                                                 if client_is_reverse {
                                                     let map = self.channel_streams.lock().await;
-                                                    if let Some(writer) =
-                                                        map.get(&data.channel_id)
+                                                    if let Some(writer) = map.get(&data.channel_id)
                                                     {
                                                         let mut s = writer.lock().await;
                                                         let _ = s.write_all(&data.data).await;
                                                     }
                                                 } else {
                                                     // Forward mode: enqueue into relay for TCP write
-                                                    let _ =
-                                                        relay.handle_data_message(data).await;
+                                                    let _ = relay.handle_data_message(data).await;
                                                 }
                                             }
                                         }
@@ -932,8 +927,7 @@ impl LinkSocksServer {
                                             if let Ok(ch) = parse_disconnect_frame(&payload) {
                                                 debug!("WS disconnect for channel {}", ch);
                                                 if client_is_reverse {
-                                                    let mut map =
-                                                        self.channel_streams.lock().await;
+                                                    let mut map = self.channel_streams.lock().await;
                                                     map.remove(&ch);
                                                 } else {
                                                     relay.disconnect_channel(ch).await;
@@ -1239,9 +1233,7 @@ impl LinkSocksServer {
             let idx = idx_guard.entry(token.clone()).or_insert(0);
             let list = self.token_clients.read().await;
             let clients_opt = list.get(&token);
-            let clients: Vec<ClientInfo> = clients_opt
-                .map(|v| v.to_vec())
-                .unwrap_or_default();
+            let clients: Vec<ClientInfo> = clients_opt.map(|v| v.to_vec()).unwrap_or_default();
             if clients.is_empty() {
                 return Err("No reverse clients available".to_string());
             }

@@ -255,10 +255,10 @@ pub struct LinkSocksClient {
 
     /// Pending connect (forward mode)
     pending_connect: PendingConnect,
- 
+
     /// Channel to TCP writer mapping (forward mode)
     channel_streams: ChannelWriters,
- 
+
     /// Ready notification
     ready: Arc<Notify>,
 
