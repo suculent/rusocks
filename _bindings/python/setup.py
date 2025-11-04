@@ -141,6 +141,11 @@ def is_rusockslib_built(lib_dir: Path) -> bool:
             return True
     return False
 
+def has_pure_python_shim(lib_dir: Path) -> bool:
+    """Return True if a pure-Python shim module exists (rusocks.py)."""
+    return (lib_dir / "rusocks.py").exists()
+
+
 def prune_foreign_binaries(lib_dir: Path) -> None:
     """Remove artifacts that are not compatible with the current interpreter.
 
@@ -388,6 +393,12 @@ def ensure_python_bindings():
     rusocks_lib_dir = here / "rusockslib"
     local_rust_src_dir = here / "rust_src"
     local_cargo_toml = here / "Cargo.toml"
+
+    # If a pure-Python shim exists, use it (tests/CI) and skip native build
+    if has_pure_python_shim(rusocks_lib_dir):
+        print("Detected pure-Python rusockslib shim; skipping native build.")
+        prune_foreign_binaries(rusocks_lib_dir)
+        return
     
     # Decide based on whether a binding for THIS interpreter exists
     if not is_rusockslib_built(rusocks_lib_dir):

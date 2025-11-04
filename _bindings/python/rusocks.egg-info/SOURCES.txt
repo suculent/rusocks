@@ -14,5 +14,6 @@ rusocks.egg-info/not-zip-safe
 rusocks.egg-info/requires.txt
 rusocks.egg-info/top_level.txt
 rusockslib/__init__.py
+rusockslib/rusocks.py
 tests/test_rusockslib.py
 tests/test_user_agent.py
