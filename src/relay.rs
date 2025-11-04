@@ -202,7 +202,7 @@ impl Relay {
                     Ok(mut addrs) => {
                         let mut first_v6: Option<SocketAddr> = None;
                         let mut chosen: Option<SocketAddr> = None;
-                        while let Some(a) = addrs.next() {
+                        for a in addrs.by_ref() {
                             if a.is_ipv4() {
                                 chosen = Some(a);
                                 break;

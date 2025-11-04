@@ -6,11 +6,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, Mutex, Notify, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;
+
+/// Type aliases to simplify complex types used in channels and pending maps
+type PendingConnectMap = HashMap<Uuid, oneshot::Sender<Result<(), String>>>;
+type PendingConnect = Arc<tokio::sync::Mutex<PendingConnectMap>>;
+type WriterHalf = Arc<tokio::sync::Mutex<OwnedWriteHalf>>;
+type ChannelWritersMap = HashMap<Uuid, WriterHalf>;
+type ChannelWriters = Arc<tokio::sync::Mutex<ChannelWritersMap>>;
 
 /// Default buffer size for data transfer
 pub const DEFAULT_BUFFER_SIZE: usize = 8192;
@@ -247,12 +254,11 @@ pub struct LinkSocksClient {
     channels: Arc<RwLock<HashMap<Uuid, ChannelInfo>>>,
 
     /// Pending connect (forward mode)
-    pending_connect: Arc<tokio::sync::Mutex<HashMap<Uuid, oneshot::Sender<Result<(), String>>>>>,
-
+    pending_connect: PendingConnect,
+ 
     /// Channel to TCP writer mapping (forward mode)
-    channel_streams:
-        Arc<tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<OwnedWriteHalf>>>>>,
-
+    channel_streams: ChannelWriters,
+ 
     /// Ready notification
     ready: Arc<Notify>,
 
@@ -495,8 +501,8 @@ impl LinkSocksClient {
 
 async fn handle_socks_conn(
     ws_tx: mpsc::Sender<WsMessage>,
-    pending: Arc<tokio::sync::Mutex<HashMap<Uuid, oneshot::Sender<Result<(), String>>>>>,
-    writers: Arc<tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<OwnedWriteHalf>>>>>,
+    pending: PendingConnect,
+    writers: ChannelWriters,
     mut stream: TcpStream,
 ) -> Result<(), String> {
     // Method negotiation

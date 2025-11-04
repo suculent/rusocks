@@ -14,13 +14,13 @@ pub mod server;
 pub mod socket;
 pub mod version;
 
-#[cfg(test)]
-mod tests {
-    pub mod user_agent_test;
-}
-
 // Re-export commonly used items
 pub use crate::cli::CLI;
 pub use crate::client::LinkSocksClient;
 pub use crate::server::LinkSocksServer;
 pub use crate::version::{PLATFORM, VERSION};
+
+#[cfg(test)]
+mod tests {
+    pub mod user_agent_test;
+}

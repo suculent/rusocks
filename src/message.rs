@@ -659,7 +659,7 @@ pub fn parse_message(data: &[u8]) -> Result<Box<dyn Message>, String> {
 }
 
 fn parse_auth_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
-    if payload.len() < 1 {
+    if payload.is_empty() {
         return Err("Invalid auth message".to_string());
     }
 
@@ -681,7 +681,7 @@ fn parse_auth_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
 }
 
 fn parse_auth_response_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
-    if payload.len() < 1 {
+    if payload.is_empty() {
         return Err("Invalid auth response message".to_string());
     }
 
@@ -725,7 +725,7 @@ pub fn parse_connect_frame(frame: &[u8]) -> Result<ConnectMessage, String> {
     let channel_id = bytes_to_uuid(&payload[1..17])?;
     let (address, port) = if protocol == "tcp" {
         let payload = &payload[17..];
-        if payload.len() < 1 {
+        if payload.is_empty() {
             return Err("Invalid tcp connect message".to_string());
         }
         let addr_len = payload[0] as usize;
@@ -814,7 +814,7 @@ fn parse_connect_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
 
     let (address, port) = if protocol == "tcp" {
         let payload = &payload[17..];
-        if payload.len() < 1 {
+        if payload.is_empty() {
             return Err("Invalid TCP connect message".to_string());
         }
 
@@ -959,7 +959,7 @@ fn parse_connector_message(payload: &[u8]) -> Result<Box<dyn Message>, String> {
     let channel_id = bytes_to_uuid(&payload[0..16])?;
     let payload = &payload[16..];
 
-    if payload.len() < 1 {
+    if payload.is_empty() {
         return Err("Invalid connector message length".to_string());
     }
 

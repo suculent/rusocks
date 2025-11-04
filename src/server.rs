@@ -29,8 +29,17 @@ pub const DEFAULT_BUFFER_SIZE: usize = 8192;
 /// Default channel timeout
 pub const DEFAULT_CHANNEL_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Default connect timeout
+/**
+ * Default connect timeout
+ */
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Type aliases to simplify complex types used in channels and pending maps
+type PendingConnectMap = HashMap<Uuid, oneshot::Sender<Result<(), String>>>;
+type PendingConnect = Arc<AsyncMutex<PendingConnectMap>>;
+type WriterHalf = Arc<tokio::sync::Mutex<OwnedWriteHalf>>;
+type ChannelWritersMap = HashMap<Uuid, WriterHalf>;
+type ChannelWriters = Arc<AsyncMutex<ChannelWritersMap>>;
 
 struct SocksTask {
     stop: Arc<Notify>,
@@ -361,11 +370,11 @@ pub struct LinkSocksServer {
     socks_tasks: Arc<RwLock<HashMap<u16, SocksTask>>>,
 
     /// Pending connect responses per channel
-    pending_connect: Arc<AsyncMutex<HashMap<Uuid, oneshot::Sender<Result<(), String>>>>>,
-
+    pending_connect: PendingConnect,
+ 
     /// Channel to TCP stream mapping for data relay
-    channel_streams: Arc<AsyncMutex<HashMap<Uuid, Arc<tokio::sync::Mutex<OwnedWriteHalf>>>>>,
-
+    channel_streams: ChannelWriters,
+ 
     /// Waiting sockets
     waiting_sockets: Arc<RwLock<HashMap<u16, WaitingSocket>>>,
 
@@ -785,12 +794,10 @@ impl LinkSocksServer {
                         WsMessage::Ping(payload) => {
                             if let Some(tx) = outbound_tx_opt.as_ref() {
                                 let _ = tx.send(WsMessage::Pong(payload)).await;
-                            } else {
-                                if let Some(s) = ws_sender_opt.as_mut() {
-                                    s.send(WsMessage::Pong(payload)).await.map_err(|e| {
-                                        format!("Failed to send pong to {}: {}", addr, e)
-                                    })?;
-                                }
+                            } else if let Some(s) = ws_sender_opt.as_mut() {
+                                s.send(WsMessage::Pong(payload)).await.map_err(|e| {
+                                    format!("Failed to send pong to {}: {}", addr, e)
+                                })?;
                             }
                         }
                         WsMessage::Pong(_) => {
@@ -861,83 +868,80 @@ impl LinkSocksServer {
                                 }
                             } else {
                                 // Dispatch inbound messages from authenticated client
-                                match parse_message(&payload) {
-                                    Ok(msg) => {
-                                        match msg.message_type() {
-                                            "connect" => {
-                                                // Forward mode: server dials out
-                                                if let Ok(conn) =
-                                                    crate::message::parse_connect_frame(&payload)
-                                                {
-                                                    debug!(
-                                                        "Forward connect: channel={} target={}:{}",
-                                                        conn.channel_id, conn.address, conn.port
-                                                    );
-                                                    if let Some(tx) = outbound_tx_opt.as_ref() {
-                                                        match relay.handle_network_connection(tx.clone(), conn.clone()).await {
-                                                            Ok(_) => debug!("Connect initiated: channel={}", conn.channel_id),
-                                                            Err(e) => warn!("Connect initiation failed: channel={} err={}", conn.channel_id, e),
-                                                        }
+                                if let Ok(msg) = parse_message(&payload) {
+                                    match msg.message_type() {
+                                        "connect" => {
+                                            // Forward mode: server dials out
+                                            if let Ok(conn) =
+                                                crate::message::parse_connect_frame(&payload)
+                                            {
+                                                debug!(
+                                                    "Forward connect: channel={} target={}:{}",
+                                                    conn.channel_id, conn.address, conn.port
+                                                );
+                                                if let Some(tx) = outbound_tx_opt.as_ref() {
+                                                    match relay.handle_network_connection(tx.clone(), conn.clone()).await {
+                                                        Ok(_) => debug!("Connect initiated: channel={}", conn.channel_id),
+                                                        Err(e) => warn!("Connect initiation failed: channel={} err={}", conn.channel_id, e),
                                                     }
                                                 }
                                             }
-                                            "connect_response" => {
-                                                // Extract channel_id and success
-                                                // Reparse using helper in message module
-                                                if let Ok(resp) = parse_connect_response(&payload) {
-                                                    let mut pending =
-                                                        self.pending_connect.lock().await;
-                                                    if let Some(tx) =
-                                                        pending.remove(&resp.channel_id)
-                                                    {
-                                                        let _ = tx.send(if resp.success {
-                                                            Ok(())
-                                                        } else {
-                                                            Err(resp.error.unwrap_or_else(|| {
-                                                                "connect failed".to_string()
-                                                            }))
-                                                        });
-                                                    }
-                                                }
-                                            }
-                                            "data" => {
-                                                if let Ok(data) = parse_data_frame(&payload) {
-                                                    debug!(
-                                                        "WS->TCP data: channel={} bytes={}",
-                                                        data.channel_id,
-                                                        data.data.len()
-                                                    );
-                                                    if client_is_reverse {
-                                                        let map = self.channel_streams.lock().await;
-                                                        if let Some(writer) =
-                                                            map.get(&data.channel_id)
-                                                        {
-                                                            let mut s = writer.lock().await;
-                                                            let _ = s.write_all(&data.data).await;
-                                                        }
-                                                    } else {
-                                                        // Forward mode: enqueue into relay for TCP write
-                                                        let _ =
-                                                            relay.handle_data_message(data).await;
-                                                    }
-                                                }
-                                            }
-                                            "disconnect" => {
-                                                if let Ok(ch) = parse_disconnect_frame(&payload) {
-                                                    debug!("WS disconnect for channel {}", ch);
-                                                    if client_is_reverse {
-                                                        let mut map =
-                                                            self.channel_streams.lock().await;
-                                                        map.remove(&ch);
-                                                    } else {
-                                                        relay.disconnect_channel(ch).await;
-                                                    }
-                                                }
-                                            }
-                                            _ => {}
                                         }
+                                        "connect_response" => {
+                                            // Extract channel_id and success
+                                            // Reparse using helper in message module
+                                            if let Ok(resp) = parse_connect_response(&payload) {
+                                                let mut pending =
+                                                    self.pending_connect.lock().await;
+                                                if let Some(tx) =
+                                                    pending.remove(&resp.channel_id)
+                                                {
+                                                    let _ = tx.send(if resp.success {
+                                                        Ok(())
+                                                    } else {
+                                                        Err(resp.error.unwrap_or_else(|| {
+                                                            "connect failed".to_string()
+                                                        }))
+                                                    });
+                                                }
+                                            }
+                                        }
+                                        "data" => {
+                                            if let Ok(data) = parse_data_frame(&payload) {
+                                                debug!(
+                                                    "WS->TCP data: channel={} bytes={}",
+                                                    data.channel_id,
+                                                    data.data.len()
+                                                );
+                                                if client_is_reverse {
+                                                    let map = self.channel_streams.lock().await;
+                                                    if let Some(writer) =
+                                                        map.get(&data.channel_id)
+                                                    {
+                                                        let mut s = writer.lock().await;
+                                                        let _ = s.write_all(&data.data).await;
+                                                    }
+                                                } else {
+                                                    // Forward mode: enqueue into relay for TCP write
+                                                    let _ =
+                                                        relay.handle_data_message(data).await;
+                                                }
+                                            }
+                                        }
+                                        "disconnect" => {
+                                            if let Ok(ch) = parse_disconnect_frame(&payload) {
+                                                debug!("WS disconnect for channel {}", ch);
+                                                if client_is_reverse {
+                                                    let mut map =
+                                                        self.channel_streams.lock().await;
+                                                    map.remove(&ch);
+                                                } else {
+                                                    relay.disconnect_channel(ch).await;
+                                                }
+                                            }
+                                        }
+                                        _ => {}
                                     }
-                                    Err(_) => {}
                                 }
                             }
                         }
@@ -1019,7 +1023,7 @@ impl LinkSocksServer {
                     }
 
                     let payload = &payload[2..];
-                    if payload.len() < 1 {
+                    if payload.is_empty() {
                         return Err("Invalid auth message".to_string());
                     }
 
@@ -1236,7 +1240,7 @@ impl LinkSocksServer {
             let list = self.token_clients.read().await;
             let clients_opt = list.get(&token);
             let clients: Vec<ClientInfo> = clients_opt
-                .map(|v| v.iter().cloned().collect())
+                .map(|v| v.to_vec())
                 .unwrap_or_default();
             if clients.is_empty() {
                 return Err("No reverse clients available".to_string());
